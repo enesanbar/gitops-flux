@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kuard
+  namespace: kuard
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: kuard.kindcluster.dev
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kuard
+            port:
+              number: 8080
+  tls:
+    - hosts:
+      - kuard.kindcluster.dev
+      secretName: kuard-tls

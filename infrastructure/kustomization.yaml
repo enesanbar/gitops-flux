@@ -3,4 +3,6 @@ kind: Kustomization
 resources:
   - cert-manager
   - flux-system
+  - ingress-nginx
+  - kube-prometheus-stack
   - sealed-secrets
