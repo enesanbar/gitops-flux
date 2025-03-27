@@ -7,3 +7,4 @@ resources:
   - prometheus-community.yaml
   - jetstack.yaml
   - sealed-secrets.yaml
+  - ww-gitops.yaml

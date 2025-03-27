@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: redisinsight
+  namespace: redis-insight
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: redis.kindcluster.dev
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: redisinsight-service
+            port:
+              number: 80
+  tls:
+    - hosts:
+      - redis.kindcluster.dev
+      secretName: redis-tls

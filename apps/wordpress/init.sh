@@ -30,9 +30,8 @@ install_wordpress() {
 }
 
 main() {
- update_config
  create_config
-
+ update_config
  install_wordpress
 }
 

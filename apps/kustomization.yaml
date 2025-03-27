@@ -3,4 +3,6 @@ kind: Kustomization
 resources:
   - kuard
   - mysql
+  - redis
+  - redis-insight
   - wordpress
