@@ -3,4 +3,6 @@ kind: Kustomization
 namespace: cert-manager
 resources:
   - namespace.yaml
+  - mkcert-ca-secret.yaml
+  - mkcert-issuer.yaml
   - helm-release.yaml

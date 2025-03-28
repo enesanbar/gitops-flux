@@ -6,13 +6,13 @@ resources:
   - ingress.yaml
   - deployment.yaml
 
-secretGenerator:
-  - name: kuard-tls
-    namespace: kuard
-    type: kubernetes.io/tls
-    files:
-      - tls.crt=kuard.kindcluster.dev.pem
-      - tls.key=kuard.kindcluster.dev-key.pem
+#secretGenerator:
+#  - name: kuard-tls
+#    namespace: kuard
+#    type: kubernetes.io/tls
+#    files:
+#      - tls.crt=kuard.kindcluster.dev.pem
+#      - tls.key=kuard.kindcluster.dev-key.pem
 
 generatorOptions:
   disableNameSuffixHash: true

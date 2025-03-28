@@ -7,13 +7,13 @@ resources:
   - pvc.yaml
   - deployment.yaml
 
-secretGenerator:
-  - name: redis-tls
-    namespace: redis-insight
-    type: kubernetes.io/tls
-    files:
-      - tls.crt=redis.kindcluster.dev.pem
-      - tls.key=redis.kindcluster.dev-key.pem
+#secretGenerator:
+#  - name: redis-tls
+#    namespace: redis-insight
+#    type: kubernetes.io/tls
+#    files:
+#      - tls.crt=redis.kindcluster.dev.pem
+#      - tls.key=redis.kindcluster.dev-key.pem
 
 generatorOptions:
   disableNameSuffixHash: true
