@@ -2,18 +2,8 @@ apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
   name: filebeat
-  namespace: elk
+  namespace: monitoring
 spec:
-  interval: 1h
-  releaseName: filebeat
-  chart:
-    spec:
-      chart: filebeat
-      version: "8.5.1"
-      sourceRef:
-        kind: HelmRepository
-        name: elastic
-        namespace: flux-system
   values:
     daemonset:
       # Annotations to apply to the daemonset
@@ -63,7 +53,7 @@ spec:
                     logs_path: "/var/log/containers/"
     
           output.logstash:
-            hosts: ["logstash-logstash.elk.svc.cluster.local:5044"]
+            hosts: ["logstash-logstash:5044"]
 
 #          output.elasticsearch:
 #            host: '${NODE_NAME}'
