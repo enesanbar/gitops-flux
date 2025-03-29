@@ -1,6 +1,6 @@
 # Cert Issuer
 
-Replace the root certificates with your own certificates in [cert-manager](infrastructure/cert-manager/mkcert-ca-secret.yaml) to issue local certificates for testing
+Replace the root certificates with your own certificates in [cert-manager](clusters/dev-cluster/components/infrastructure/cert-issuer/mkcert-ca-secret.yaml) to issue local certificates for testing
 
 ```bash
 mkcert -install
