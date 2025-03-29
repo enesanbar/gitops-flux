@@ -6,7 +6,6 @@ metadata:
   labels:
     app: kuard
     tier: frontend
-    environment: dev
 spec:
   replicas: 1
   revisionHistoryLimit: 3
@@ -14,7 +13,6 @@ spec:
     matchLabels:
       app: kuard
       tier: frontend
-      environment: dev
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -25,10 +23,9 @@ spec:
       labels:
         app: kuard
         tier: frontend
-        environment: dev
     spec:
       containers:
-        - image: gcr.io/kuar-demo/kuard-amd64:1
+        - image: <PLACEHOLDER>
           name: kuard
           ports:
             - containerPort: 8080
