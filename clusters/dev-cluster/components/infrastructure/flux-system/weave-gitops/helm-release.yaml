@@ -1,0 +1,30 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: weave-gitops
+  namespace: flux-system
+spec:
+  values:
+    adminUser:
+      create: true
+      username: admin
+      passwordHash: $2a$10$5KWFPB1fcJtnwaC1IlMbeOrYbLADe5dv4pMI3gANlO/tCxtCIdH/W
+
+    ingress:
+      enabled: true
+      className: nginx
+      annotations:
+        cert-manager.io/cluster-issuer: mkcert-issuer
+      hosts:
+       - host: weave-gitops.kindcluster.dev
+         paths:
+           - path: /
+             pathType: ImplementationSpecific
+
+      tls:
+        - hosts:
+          - weave-gitops.kindcluster.dev
+          secretName: weave-gitops-tls
+
+    metrics:
+      enabled: true

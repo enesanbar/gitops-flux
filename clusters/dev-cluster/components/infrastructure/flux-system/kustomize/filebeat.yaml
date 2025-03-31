@@ -1,0 +1,20 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: filebeat
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: monitoring
+    - name: logstash
+    - name: elasticsearch
+  interval: 10m0s
+  retryInterval: 30s
+  timeout: 30m0s
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./clusters/dev-cluster/components/infrastructure/filebeat
+  prune: true
+  wait: true
