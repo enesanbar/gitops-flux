@@ -12,5 +12,6 @@ resources:
 - redis.yaml
 - redis-insight.yaml
 - monitoring.yaml
+- rabbitmq.yaml
 - tofu-controller.yaml
 - weave-gitops.yaml
