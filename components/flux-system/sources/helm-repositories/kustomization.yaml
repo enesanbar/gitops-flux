@@ -5,6 +5,7 @@ resources:
   - bitnami.yaml
   - elastic.yaml
   - ingress-nginx.yaml
+  - metallb.yaml
   - prometheus-community.yaml
   - jetstack.yaml
   - sealed-secrets.yaml
