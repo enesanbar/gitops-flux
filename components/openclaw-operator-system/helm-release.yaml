@@ -1,0 +1,142 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: openclaw-operator
+  namespace: openclaw-operator-system
+spec:
+  interval: 1h
+  releaseName: openclaw-operator
+  chart:
+    spec:
+      chart: openclaw-operator
+      version: "0.25.2"
+      sourceRef:
+        kind: HelmRepository
+        name: openclaw-rocks
+        namespace: flux-system
+  values:
+    # OpenClaw Operator Helm Values
+
+    # Number of replicas for the operator
+    replicaCount: 1
+
+    # Operator image configuration
+    image:
+      repository: ghcr.io/openclaw-rocks/openclaw-operator
+      pullPolicy: IfNotPresent
+      tag: ""  # Defaults to chart appVersion
+
+    imagePullSecrets: []
+    nameOverride: ""
+    fullnameOverride: ""
+
+    # ServiceAccount configuration
+    serviceAccount:
+      create: true
+      automount: true
+      annotations: {}
+      name: ""
+
+    # Pod annotations
+    podAnnotations: {}
+
+    # Pod labels
+    podLabels: {}
+
+    # Pod security context
+    podSecurityContext:
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+
+    # Container security context
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      runAsUser: 65532
+
+    # Resource limits and requests
+    resources:
+      limits:
+        cpu: 500m
+        memory: 256Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+    # Liveness probe configuration
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: 8081
+      initialDelaySeconds: 15
+      periodSeconds: 20
+
+    # Readiness probe configuration
+    readinessProbe:
+      httpGet:
+        path: /readyz
+        port: 8081
+      initialDelaySeconds: 5
+      periodSeconds: 10
+
+    # Node selector for pod scheduling
+    nodeSelector: {}
+
+    # Tolerations for pod scheduling
+    tolerations: []
+
+    # Affinity rules for pod scheduling
+    affinity: {}
+
+    # Leader election configuration
+    leaderElection:
+      enabled: true
+      resourceName: openclaw-operator-leader-election
+
+    # Metrics configuration
+    metrics:
+      enabled: true
+      bindAddress: ":8443"
+      secure: true
+      # Service for operator metrics endpoint
+      service:
+        port: 8443
+        annotations: {}
+      # ServiceMonitor for Prometheus Operator scraping
+      serviceMonitor:
+        enabled: false
+        interval: ""
+        scrapeTimeout: ""
+        labels: {}
+
+    # OTLP metrics export configuration (operator-level metrics).
+    # Bridges all Prometheus metrics to an OTLP-compatible backend via gRPC.
+    # Both Prometheus scraping and OTLP push can be active simultaneously.
+    otlp:
+      enabled: false
+      endpoint: ""  # e.g. "otel-collector.observability.svc:4317"
+      insecure: true
+
+    # Webhook configuration (optional)
+    webhook:
+      enabled: false
+      port: 9443
+      certManager:
+        enabled: true
+        issuerRef:
+          name: ""
+          kind: ""
+
+    # Network policy for the operator
+    networkPolicy:
+      enabled: true
+
+    # CRD installation
+    crds:
+      install: true
+      keep: true  # Keep CRDs when uninstalling the chart
