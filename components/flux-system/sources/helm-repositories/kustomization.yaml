@@ -8,6 +8,7 @@ resources:
   - metallb.yaml
   - prometheus-community.yaml
   - jetstack.yaml
+  - kubeclaw.yaml
   - openclaw-operator.yaml
   - sealed-secrets.yaml
   - tofu-controller.yaml

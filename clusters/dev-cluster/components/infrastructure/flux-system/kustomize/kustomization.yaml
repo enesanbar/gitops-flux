@@ -17,6 +17,7 @@ resources:
 - monitoring.yaml
 - openclaw-operator-system.yaml
 - openclaw-operator-instances.yaml
+- openclaw-raw-instances.yaml
 - rabbitmq.yaml
 - redis.yaml
 - redis-insight.yaml
