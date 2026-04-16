@@ -1,0 +1,25 @@
+---
+kind: Ingress
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: skooner
+  namespace: skooner
+  annotations:
+    cert-manager.io/cluster-issuer: mkcert-issuer
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: skooner.kindcluster.dev
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: skooner
+            port:
+              number: 80
+  tls:
+    - hosts:
+      - skooner.kindcluster.dev
+      secretName: skooner-tls
