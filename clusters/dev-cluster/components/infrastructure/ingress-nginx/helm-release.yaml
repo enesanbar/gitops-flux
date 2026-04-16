@@ -10,3 +10,5 @@ spec:
         enabled: false
       service:
         type: LoadBalancer
+        annotations:
+          metallb.io/loadBalancerIPs: "172.88.0.200"

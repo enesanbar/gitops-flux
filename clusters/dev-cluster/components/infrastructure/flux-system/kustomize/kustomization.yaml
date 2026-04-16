@@ -10,6 +10,7 @@ resources:
 - metallb.yaml
 - metallb-config.yaml
 - kibana.yaml
+- kube-prometheus-stack.yaml
 - logstash.yaml
 - redis.yaml
 - redis-insight.yaml
