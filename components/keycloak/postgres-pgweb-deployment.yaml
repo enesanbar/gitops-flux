@@ -1,0 +1,25 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgweb
+  namespace: keycloak
+  labels:
+    app: pgweb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgweb
+  template:
+    metadata:
+      labels:
+        app: pgweb
+    spec:
+      containers:
+        - name: pgweb
+          image: sosedoff/pgweb
+          ports:
+            - containerPort: 8081
+          args:
+            - "--url=postgresql://keycloak:keycloak@postgres:5432/keycloak?sslmode=disable"
