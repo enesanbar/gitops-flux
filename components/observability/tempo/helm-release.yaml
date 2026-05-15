@@ -20,6 +20,20 @@ spec:
       metricsGenerator:
         enabled: true
         remoteWriteUrl: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090/api/v1/write
+      # The chart enables the metrics-generator binary but hardcodes the
+      # global processors list to [service-graphs, span-metrics] only.
+      # Grafana's TraceQL Drilldown / metric queries (rate(), quantile(),
+      # histogram_over_time) need the local-blocks processor too, otherwise
+      # the querier fails with "localblocks processor not found".
+      #
+      # Override per-tenant for the default single-tenant tenant; the
+      # chart wraps this value in `overrides:` for /conf/overrides.yaml.
+      overrides:
+        'single-tenant':
+          metrics_generator_processors:
+            - 'service-graphs'
+            - 'span-metrics'
+            - 'local-blocks'
       receivers:
         otlp:
           protocols:

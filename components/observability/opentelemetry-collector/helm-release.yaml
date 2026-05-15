@@ -203,7 +203,10 @@ spec:
             processors: [memory_limiter, k8sattributes, groupbyattrs/session, batch]
             # elasticsearch/logs removed pending auth wiring — ELK still
             # ingests via filebeat. See comment on the exporter above.
-            exporters: [otlphttp/loki, debug]
+            # otlp/signoz handles logs too (SigNoz ingests OTLP traces +
+            # metrics + logs on the same port), so re-use the same exporter
+            # we already configured for traces.
+            exporters: [otlphttp/loki, otlp/signoz, debug]
           metrics:
             receivers: [otlp]
             processors: [memory_limiter, deltatocumulative, batch]
