@@ -52,8 +52,12 @@ spec:
         - "all"
       # update only the statefulsets without immediately doing the rolling update
       enable_lazy_spilo_upgrade: false
-      # toogle to use maintenance windows feature
-      enable_maintenance_windows: true
+      # NOTE: `enable_maintenance_windows` removed — the field doesn't
+      # exist in the chart 1.15.1 OperatorConfiguration CRD schema, and
+      # leaving it in the values fails the install with
+      # "field not declared in schema". Maintenance windows can still be
+      # set per-postgresql-resource via maintenance_windows on the
+      # cluster manifest if needed.
       # set the PGVERSION env var instead of providing the version via postgresql.bin_dir in SPILO_CONFIGURATION
       enable_pgversion_env_var: true
       # start any new database pod without limitations on shm memory
