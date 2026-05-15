@@ -35,12 +35,21 @@ spec:
         allow_structured_metadata: true
         volume_enabled: true
         retention_period: 168h
-        # Promote session.id and prompt.id from OTLP attributes to indexed
-        # Loki stream labels. Without this, they live as structured metadata
-        # and cannot be matched in the stream selector `{...}` — which is the
-        # only thing Grafana's tracesToLogsV2 button generates. Keep the
-        # promotion list tight; each indexed label multiplies cardinality.
-        # Loki normalizes dots to underscores: session.id → session_id label.
+        # Promote session.id from the OTLP Resource into an indexed Loki
+        # stream label — necessary for Grafana's tracesToLogsV2 button,
+        # which only generates queries against indexed labels (not
+        # structured metadata). Loki normalizes dots to underscores at
+        # ingest, so the resulting label is session_id.
+        #
+        # NOTE: Loki only accepts `action: index_label` under
+        # resource_attributes — log_attributes and scope_attributes can
+        # only do structured_metadata/drop. That makes prompt.id (a
+        # log-record attribute, not a resource attribute) un-promotable
+        # without a collector-side transform processor that copies it up
+        # to the Resource. Acceptable trade-off for dev — session_id
+        # already narrows the pivot to a single Claude Code session;
+        # users can filter further by prompt_id inside the logs view
+        # via structured-metadata pipe syntax: | prompt_id="..."
         otlp_config:
           resource_attributes:
             attributes_config:
@@ -50,11 +59,6 @@ spec:
                   - service.namespace
                   - service.version
                   - session.id
-          log_attributes:
-            - action: index_label
-              attributes:
-                - session.id
-                - prompt.id
       ingester:
         chunk_encoding: snappy
       pattern_ingester:

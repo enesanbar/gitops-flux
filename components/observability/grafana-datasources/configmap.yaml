@@ -28,8 +28,6 @@ data:
                 value: service_name
               - key: session.id
                 value: session_id
-              - key: prompt.id
-                value: prompt_id
             filterByTraceID: false
             filterBySpanID: false
             customQuery: false
@@ -73,7 +71,5 @@ data:
                 value: service_name
               - key: session.id
                 value: session_id
-              - key: prompt.id
-                value: prompt_id
             filterByTraceID: false
             filterBySpanID: false
