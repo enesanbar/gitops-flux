@@ -78,6 +78,20 @@ spec:
         deltatocumulative:
           max_stale: 5m
           max_streams: 10000
+        # Promote session.id from per-span/per-log-record attribute up to
+        # the OTLP Resource. Two reasons:
+        #   1. Loki only accepts `action: index_label` under resource
+        #      attributes — Claude Code emits session.id as a record-level
+        #      attribute, so without this, the value lives only as
+        #      structured metadata and can't be matched in `{...}`.
+        #   2. Grafana's tracesToLogsV2 button generates a Loki
+        #      stream-selector query, which only works on indexed labels.
+        # The processor re-groups records by session.id, creating a new
+        # resource per (service.name, session.id) pair. Cardinality cost
+        # is bounded: one resource per Claude Code session.
+        groupbyattrs/session:
+          keys:
+            - session.id
       exporters:
         otlp/tempo:
           endpoint: tempo.observability.svc.cluster.local:4317
@@ -183,7 +197,10 @@ spec:
             exporters: [otlp/tempo, otlp/jaeger, otlp/signoz, debug]
           logs:
             receivers: [otlp]
-            processors: [memory_limiter, k8sattributes, batch]
+            # groupbyattrs/session BEFORE batch so the resource grouping
+            # is settled when the batch processor merges records of the
+            # same resource into one OTLP batch.
+            processors: [memory_limiter, k8sattributes, groupbyattrs/session, batch]
             # elasticsearch/logs removed pending auth wiring — ELK still
             # ingests via filebeat. See comment on the exporter above.
             exporters: [otlphttp/loki, debug]
