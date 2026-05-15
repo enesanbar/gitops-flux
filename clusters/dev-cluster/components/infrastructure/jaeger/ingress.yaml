@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jaeger-ui
+  namespace: observability
+  annotations:
+    cert-manager.io/cluster-issuer: mkcert-issuer
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - jaeger.kindcluster.dev
+      secretName: jaeger-tls
+  rules:
+    - host: jaeger.kindcluster.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: jaeger-query
+                port:
+                  number: 16686

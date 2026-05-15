@@ -1,0 +1,153 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: opentelemetry-collector
+  namespace: observability
+spec:
+  interval: 1h
+  releaseName: otel-collector
+  chart:
+    spec:
+      chart: opentelemetry-collector
+      version: "0.108.0"
+      sourceRef:
+        kind: HelmRepository
+        name: open-telemetry
+        namespace: flux-system
+  values:
+    mode: deployment
+    replicaCount: 1
+    image:
+      repository: otel/opentelemetry-collector-contrib
+    command:
+      name: otelcol-contrib
+    presets:
+      kubernetesAttributes:
+        enabled: true
+    ports:
+      otlp:
+        enabled: true
+        containerPort: 4317
+        servicePort: 4317
+        protocol: TCP
+      otlp-http:
+        enabled: true
+        containerPort: 4318
+        servicePort: 4318
+        protocol: TCP
+      metrics:
+        enabled: true
+        containerPort: 8888
+        servicePort: 8888
+        protocol: TCP
+    config:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+            http:
+              endpoint: 0.0.0.0:4318
+              cors:
+                allowed_origins:
+                  - "https://*.kindcluster.dev"
+      processors:
+        memory_limiter:
+          check_interval: 1s
+          limit_percentage: 80
+          spike_limit_percentage: 25
+        batch: {}
+        k8sattributes: {}
+      exporters:
+        otlp/tempo:
+          endpoint: tempo.observability.svc.cluster.local:4317
+          tls:
+            insecure: true
+          sending_queue:
+            enabled: true
+            queue_size: 1000
+          retry_on_failure:
+            enabled: true
+            initial_interval: 5s
+            max_interval: 30s
+            max_elapsed_time: 5m
+        otlp/jaeger:
+          endpoint: jaeger-collector.observability.svc.cluster.local:4317
+          tls:
+            insecure: true
+          sending_queue:
+            enabled: true
+            queue_size: 1000
+          retry_on_failure:
+            enabled: true
+            max_elapsed_time: 5m
+        otlp/signoz:
+          endpoint: signoz-otel-collector.signoz.svc.cluster.local:4317
+          tls:
+            insecure: true
+          sending_queue:
+            enabled: true
+            queue_size: 1000
+          retry_on_failure:
+            enabled: true
+            max_elapsed_time: 5m
+        otlphttp/loki:
+          endpoint: http://loki.observability.svc.cluster.local:3100/otlp
+          sending_queue:
+            enabled: true
+            queue_size: 1000
+          retry_on_failure:
+            enabled: true
+            max_elapsed_time: 5m
+        # ELK fan-out target. Elasticsearch lives in `monitoring` ns over HTTPS
+        # with auto-generated credentials (secret: elasticsearch-master-credentials,
+        # key: password — created in `monitoring` ns by the elastic chart).
+        # Without auth wired, this exporter will fail 401 and retry indefinitely.
+        # Resilience design absorbs that gracefully (other exporters keep flowing).
+        # To enable for real: replicate the secret to `observability` ns and add
+        # a basicauth/es extension referencing $ES_PASSWORD via extraEnvs in the
+        # cluster overlay.
+        elasticsearch/logs:
+          endpoints:
+            - https://elasticsearch-master.monitoring.svc.cluster.local:9200
+          tls:
+            insecure_skip_verify: true
+          logs_index: otel-logs
+          sending_queue:
+            enabled: true
+            queue_size: 1000
+          retry:
+            enabled: true
+            max_requests: 5
+            initial_interval: 5s
+            max_interval: 30s
+        prometheusremotewrite/kps:
+          endpoint: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090/api/v1/write
+          target_info:
+            enabled: true
+          remote_write_queue:
+            enabled: true
+            queue_size: 10000
+            num_consumers: 5
+          retry_on_failure:
+            enabled: true
+            max_elapsed_time: 5m
+        debug:
+          verbosity: basic
+      service:
+        telemetry:
+          metrics:
+            address: 0.0.0.0:8888
+        pipelines:
+          traces:
+            receivers: [otlp]
+            processors: [memory_limiter, k8sattributes, batch]
+            exporters: [otlp/tempo, otlp/jaeger, otlp/signoz, debug]
+          logs:
+            receivers: [otlp]
+            processors: [memory_limiter, k8sattributes, batch]
+            exporters: [otlphttp/loki, elasticsearch/logs, debug]
+          metrics:
+            receivers: [otlp]
+            processors: [memory_limiter, batch]
+            exporters: [prometheusremotewrite/kps, debug]

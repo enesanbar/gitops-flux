@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: otel-collector-grpc
+  namespace: observability
+  annotations:
+    cert-manager.io/cluster-issuer: mkcert-issuer
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - otlp-grpc.kindcluster.dev
+      secretName: otlp-grpc-tls
+  rules:
+    - host: otlp-grpc.kindcluster.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: otel-collector-opentelemetry-collector
+                port:
+                  number: 4317

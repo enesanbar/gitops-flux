@@ -3651,9 +3651,12 @@ spec:
         maxUnavailable: ""
         unhealthyPodEvictionPolicy: AlwaysAllow
 
-      # Ingress exposes thanos sidecar outside the cluster
+      # Ingress exposes thanos sidecar outside the cluster.
+      # Disabled: the Thanos sidecar is not enabled (prometheusSpec.thanos is empty), so this
+      # Ingress had nothing to expose and was failing render with pathType required since the
+      # paths array was empty.
       thanosIngress:
-        enabled: true
+        enabled: false
 
         # For Kubernetes >= 1.18 you should specify the ingress-controller via the field ingressClassName
         # See https://kubernetes.io/blog/2020/04/02/improvements-to-the-ingress-api-in-kubernetes-1.18/#specifying-the-class-of-an-ingress
@@ -3993,7 +3996,8 @@ spec:
 
         # EnableFeatures API enables access to Prometheus disabled features.
         # ref: https://prometheus.io/docs/prometheus/latest/feature_flags/
-        enableFeatures: []
+        enableFeatures:
+          - otlp-write-receiver
         # - exemplar-storage
 
         ##
@@ -4048,7 +4052,7 @@ spec:
 
         ## enable --web.enable-remote-write-receiver flag on prometheus-server
         ##
-        enableRemoteWriteReceiver: false
+        enableRemoteWriteReceiver: true
 
         ## Name of the external label used to denote replica name
         ##

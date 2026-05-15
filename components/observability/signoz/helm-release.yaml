@@ -1,0 +1,67 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: signoz
+  namespace: signoz
+spec:
+  interval: 1h
+  releaseName: signoz
+  chart:
+    spec:
+      chart: signoz
+      version: "0.60.0"
+      sourceRef:
+        kind: HelmRepository
+        name: signoz
+        namespace: flux-system
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  values:
+    global:
+      storageClass: standard
+    clickhouse:
+      enabled: true
+      replicaCount: 1
+      cluster: cluster
+      shards: 1
+      replicasPerShard: 1
+      persistence:
+        enabled: false
+      zookeeper:
+        enabled: true
+        replicaCount: 1
+        persistence:
+          enabled: false
+        image:
+          registry: docker.io
+          repository: bitnamilegacy/zookeeper
+          tag: 3.9.3-debian-12-r22
+    zookeeper:
+      enabled: false
+    otelCollector:
+      replicaCount: 1
+      ports:
+        otlp:
+          servicePort: 4317
+          containerPort: 4317
+        otlp-http:
+          servicePort: 4318
+          containerPort: 4318
+    queryService:
+      replicaCount: 1
+    frontend:
+      replicaCount: 1
+      service:
+        type: ClusterIP
+        port: 3301
+    alertmanager:
+      enabled: true
+      replicaCount: 1
+      persistence:
+        enabled: false
