@@ -15,6 +15,10 @@ data:
         access: proxy
         url: http://tempo.observability.svc.cluster.local:3100
         jsonData:
+          # Claude Code emits traces and logs from different instrumentation
+          # scopes (com.anthropic.claude_code.tracing vs .events). Logs do
+          # NOT carry trace_id labels — correlation has to happen via
+          # session.id or prompt.id, which are present on both signals.
           tracesToLogsV2:
             datasourceUid: loki
             spanStartTimeShift: "-1h"
@@ -22,7 +26,12 @@ data:
             tags:
               - key: service.name
                 value: service_name
-            filterByTraceID: true
+              - key: session.id
+                value: session_id
+              - key: prompt.id
+                value: prompt_id
+            filterByTraceID: false
+            filterBySpanID: false
             customQuery: false
           tracesToMetrics:
             datasourceUid: prometheus
@@ -62,3 +71,9 @@ data:
             tags:
               - key: service.name
                 value: service_name
+              - key: session.id
+                value: session_id
+              - key: prompt.id
+                value: prompt_id
+            filterByTraceID: false
+            filterBySpanID: false

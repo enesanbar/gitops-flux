@@ -57,7 +57,20 @@ spec:
           limit_percentage: 80
           spike_limit_percentage: 25
         batch: {}
-        k8sattributes: {}
+        # Drop the chart preset's `connection` fallback in pod_association.
+        # External traffic arriving via ingress-nginx would otherwise be
+        # mis-attributed to the ingress controller pod (peer IP). Only enrich
+        # when the source explicitly sets k8s.pod.ip or k8s.pod.uid as
+        # resource attributes — in-cluster OTel SDKs with the Kubernetes
+        # resource detector do; external clients like Claude Code do not.
+        k8sattributes:
+          pod_association:
+            - sources:
+                - from: resource_attribute
+                  name: k8s.pod.ip
+            - sources:
+                - from: resource_attribute
+                  name: k8s.pod.uid
         # Prometheus's OTLP receiver silently drops delta-temporality sums.
         # Claude Code emits claude_code.* metrics as Delta — convert here so
         # they land regardless of what the SDK is configured to send.
