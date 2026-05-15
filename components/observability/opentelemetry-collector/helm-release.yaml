@@ -119,28 +119,42 @@ spec:
           retry_on_failure:
             enabled: true
             max_elapsed_time: 5m
-        # ELK fan-out target. Elasticsearch lives in `monitoring` ns over HTTPS
-        # with auto-generated credentials (secret: elasticsearch-master-credentials,
-        # key: password — created in `monitoring` ns by the elastic chart).
-        # Without auth wired, this exporter will fail 401 and retry indefinitely.
-        # Resilience design absorbs that gracefully (other exporters keep flowing).
-        # To enable for real: replicate the secret to `observability` ns and add
-        # a basicauth/es extension referencing $ES_PASSWORD via extraEnvs in the
-        # cluster overlay.
-        elasticsearch/logs:
-          endpoints:
-            - https://elasticsearch-master.monitoring.svc.cluster.local:9200
-          tls:
-            insecure_skip_verify: true
-          logs_index: otel-logs
-          sending_queue:
-            enabled: true
-            queue_size: 1000
-          retry:
-            enabled: true
-            max_requests: 5
-            initial_interval: 5s
-            max_interval: 30s
+        # ELK fan-out target — KEPT FOR REFERENCE, NOT WIRED INTO PIPELINE.
+        # Elasticsearch lives in `monitoring` ns over HTTPS with auto-generated
+        # credentials (secret: elasticsearch-master-credentials in `monitoring`).
+        # We don't currently authenticate, so this exporter would fail 401 on
+        # every batch — spamming collector logs ~200/min.
+        #
+        # ELK already receives cluster logs via the standalone `filebeat`
+        # Kustomization (clusters/dev-cluster/.../infrastructure/filebeat),
+        # so dropping this redundant fan-out doesn't lose log coverage —
+        # Claude Code logs still land in Loki via otlphttp/loki below.
+        #
+        # To re-enable cleanly:
+        #   1. Use a secret-mirroring tool (e.g. emberstack/reflector) to
+        #      replicate elasticsearch-master-credentials into observability,
+        #      OR generate the ES password deterministically via the chart's
+        #      auth.password value and Kustomize-manage a Secret here.
+        #   2. Add a basicauth/es extension to the collector referencing
+        #      $ES_PASSWORD via extraEnvs.
+        #   3. Set auth.authenticator: basicauth/es on this exporter.
+        #   4. Re-add elasticsearch/logs to the `logs` pipeline exporters.
+        # elasticsearch/logs:
+        #   endpoints:
+        #     - https://elasticsearch-master.monitoring.svc.cluster.local:9200
+        #   tls:
+        #     insecure_skip_verify: true
+        #   logs_index: otel-logs
+        #   auth:
+        #     authenticator: basicauth/es
+        #   sending_queue:
+        #     enabled: true
+        #     queue_size: 1000
+        #   retry:
+        #     enabled: true
+        #     max_requests: 5
+        #     initial_interval: 5s
+        #     max_interval: 30s
         # Prometheus 3.x: use OTLP/HTTP exporter against the native OTLP
         # receiver (/api/v1/otlp/v1/metrics, gated by --web.enable-otlp-receiver).
         # The prometheusremotewrite exporter still reports success against
@@ -170,7 +184,9 @@ spec:
           logs:
             receivers: [otlp]
             processors: [memory_limiter, k8sattributes, batch]
-            exporters: [otlphttp/loki, elasticsearch/logs, debug]
+            # elasticsearch/logs removed pending auth wiring — ELK still
+            # ingests via filebeat. See comment on the exporter above.
+            exporters: [otlphttp/loki, debug]
           metrics:
             receivers: [otlp]
             processors: [memory_limiter, deltatocumulative, batch]
