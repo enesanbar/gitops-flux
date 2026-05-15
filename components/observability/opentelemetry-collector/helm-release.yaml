@@ -58,6 +58,13 @@ spec:
           spike_limit_percentage: 25
         batch: {}
         k8sattributes: {}
+        # Prometheus's OTLP receiver silently drops delta-temporality sums.
+        # Claude Code emits claude_code.* metrics as Delta — convert here so
+        # they land regardless of what the SDK is configured to send.
+        # State is in-memory; the first delta after collector restart is lost.
+        deltatocumulative:
+          max_stale: 5m
+          max_streams: 10000
       exporters:
         otlp/tempo:
           endpoint: tempo.observability.svc.cluster.local:4317
@@ -137,9 +144,7 @@ spec:
             enabled: true
             max_elapsed_time: 5m
         debug:
-          # TEMP: detailed verbosity to debug Claude Code metric ingestion.
-          # Revert to "basic" once claude_code.* metrics are confirmed.
-          verbosity: detailed
+          verbosity: basic
       service:
         telemetry:
           metrics:
@@ -155,5 +160,5 @@ spec:
             exporters: [otlphttp/loki, elasticsearch/logs, debug]
           metrics:
             receivers: [otlp]
-            processors: [memory_limiter, batch]
+            processors: [memory_limiter, deltatocumulative, batch]
             exporters: [otlphttp/kps, debug]
