@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kubia
+  namespace: kubia
+  annotations:
+    cert-manager.io/cluster-issuer: mkcert-issuer
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: kubia.kindcluster.dev
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kubia
+            port:
+              number: 80
+  tls:
+    - hosts:
+      - kubia.kindcluster.dev
+      secretName: kubia-tls

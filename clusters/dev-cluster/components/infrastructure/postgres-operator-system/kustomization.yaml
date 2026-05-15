@@ -1,0 +1,8 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- ../../../../../components/postgres-operator-system
+
+patches:
+  - path: postgres-operator-helm-release.yaml
+  - path: postgres-operator-ui-helm-release.yaml

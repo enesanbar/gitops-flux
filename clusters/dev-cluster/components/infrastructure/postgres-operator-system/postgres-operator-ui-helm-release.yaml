@@ -1,0 +1,33 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: postgres-operator-ui
+  namespace: postgres-operator-system
+spec:
+  values:
+    envs:
+      # IMPORTANT: While operator chart and UI chart are independent, this is the interface between
+      # UI and operator API. Insert the service name of the operator API here!
+      appUrl: "http://localhost:8081"
+      operatorApiUrl: "http://postgres-operator:8080"
+      operatorClusterNameLabel: "cluster-name"
+      resourcesVisible: "False"
+      # Set to "*" to allow viewing/creation of clusters in all namespaces
+      targetNamespace: "default"
+      teams:
+        - "acid"
+
+    # configure UI ingress. If needed: "enabled: true"
+    ingress:
+      enabled: true
+      annotations:
+        cert-manager.io/cluster-issuer: mkcert-issuer
+
+      ingressClassName: nginx
+      hosts:
+        - host: postgres-operator.kindcluster.dev
+          paths: ["/"]
+      tls:
+        - hosts:
+            - postgres-operator.kindcluster.dev
+          secretName: postgres-operator-tls

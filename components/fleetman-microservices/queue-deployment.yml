@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: queue
+  name: queue
+  namespace: fleetman-microservices
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: queue
+  template:
+    metadata:
+      labels:
+        app: queue
+    spec:
+      containers:
+      - image: richardchesterwood/k8s-fleetman-queue:release2
+        name: queue
+        resources:
+          requests:
+            memory: 300Mi
+            cpu: 100m
+
+

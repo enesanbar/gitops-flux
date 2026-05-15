@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: api-gateway
+  name: api-gateway
+  namespace: fleetman-microservices
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+      - image: richardchesterwood/k8s-fleetman-api-gateway:release2
+        name: api-gateway
+        env:
+          - name: SPRING_PROFILES_ACTIVE
+            value: local-microservice

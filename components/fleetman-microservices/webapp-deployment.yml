@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: webapp
+  name: webapp
+  namespace: fleetman-microservices
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+    spec:
+      containers:
+      - image: richardchesterwood/k8s-fleetman-webapp-angular:release2
+        name: webapp
+        env:
+          - name: SPRING_PROFILES_ACTIVE
+            value: local-microservice

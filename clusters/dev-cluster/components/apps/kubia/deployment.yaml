@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubia
+  namespace: kubia
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: kubia
+      type: frontend
+  strategy: {}
+  template:
+    metadata:
+      labels:
+        app: kubia
+        type: frontend
+    spec:
+      containers:
+      - image: luksa/kubia
+        name: kubia
+        ports:
+        - name: http
+          containerPort: 8080
+        resources:
+          limits:
+            cpu: 100m
+            memory: 100Mi

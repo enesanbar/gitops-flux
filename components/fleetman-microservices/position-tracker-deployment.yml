@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: position-tracker
+  name: position-tracker
+  namespace: fleetman-microservices
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: position-tracker
+  template:
+    metadata:
+      labels:
+        app: position-tracker
+    spec:
+      containers:
+      - image: richardchesterwood/k8s-fleetman-position-tracker:release3
+        name: position-tracker
+        env:
+          - name: SPRING_PROFILES_ACTIVE
+            value: local-microservice

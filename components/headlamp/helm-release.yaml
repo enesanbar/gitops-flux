@@ -1,16 +1,16 @@
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
-  name: rabbitmq
-  namespace: rabbitmq
+  name: headlamp
+  namespace: headlamp
 spec:
   interval: 1h
-  releaseName: rabbitmq
+  releaseName: headlamp
   chart:
     spec:
-      chart: rabbitmq
-      version: "17.3.8"
+      chart: headlamp
+      version: "0.41.0"
       sourceRef:
         kind: HelmRepository
-        name: bitnami-oci
+        name: headlamp
         namespace: flux-system

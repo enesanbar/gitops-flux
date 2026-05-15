@@ -1,3 +1,4 @@
+# TODO: Retire all bitnami repositories
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:

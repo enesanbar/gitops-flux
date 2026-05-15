@@ -4,12 +4,14 @@ namespace: flux-system
 resources:
   - bitnami.yaml
   - elastic.yaml
+  - headlamp.yaml
   - ingress-nginx.yaml
   - metallb.yaml
   - prometheus-community.yaml
   - jetstack.yaml
   - kubeclaw.yaml
   - openclaw-operator.yaml
+  - postgres-operator.yaml
   - sealed-secrets.yaml
   - tofu-controller.yaml
   - ww-gitops.yaml

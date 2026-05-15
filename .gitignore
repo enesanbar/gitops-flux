@@ -1,0 +1,4 @@
+clusters/dev-cluster/components/apps/kubeclaw-instances/*
+clusters/dev-cluster/components/apps/openclaw-operator-instances/*
+clusters/dev-cluster/components/apps/openclaw-raw-instances/*
+*-localpathprovisioner-data*
