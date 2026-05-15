@@ -16,7 +16,10 @@ spec:
         - host: headlamp.kindcluster.dev
           paths:
             - path: /
-              pathType: ImplementationSpecific
+              # Chart maps this to the rendered Ingress's pathType field.
+              # The intuitive `pathType:` key here would silently render as
+              # an empty pathType — which K8s rejects ("Required value").
+              type: ImplementationSpecific
       tls:
         - hosts:
             - headlamp.kindcluster.dev

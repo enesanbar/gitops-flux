@@ -10,7 +10,12 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: tofu-controller
-      version: '0.16.0-rc.5'
+      # 0.16.0-rc.5 shipped the chart's bundled aws-package OCIRepository
+      # with apiVersion: source.toolkit.fluxcd.io/v1beta2 — that API was
+      # removed in current Flux, so helm install errored "no matches for
+      # kind OCIRepository in version source.toolkit.fluxcd.io/v1beta2".
+      # 0.16.3 (stable) uses v1.
+      version: '0.16.3'
   interval: 1h0s
   releaseName: tofu-controller
   targetNamespace: flux-system
@@ -35,9 +40,9 @@ spec:
     caCertValidityDuration: 24h
     certRotationCheckFrequency: 30m
     image:
-      tag: v0.16.0-rc.5
+      tag: v0.16.3
     runner:
       image:
-        tag: v0.16.0-rc.5
+        tag: v0.16.3
       grpc:
         maxMessageSize: 30

@@ -15,6 +15,7 @@ resources:
   - kubeclaw.yaml
   - openclaw-operator.yaml
   - postgres-operator.yaml
+  - postgres-operator-ui.yaml
   - sealed-secrets.yaml
   - signoz.yaml
   - tofu-controller.yaml

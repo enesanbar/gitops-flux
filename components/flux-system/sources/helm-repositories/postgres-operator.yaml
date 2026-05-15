@@ -1,8 +1,12 @@
 ---
+# Zalando's postgres-operator chart repo lives at /charts/postgres-operator/
+# (not the parent /charts/ directory — that returns 404). The operator-UI
+# chart is a separate repo at /charts/postgres-operator-ui/ — see
+# postgres-operator-ui.yaml.
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
   name: postgres-operator
 spec:
   interval: 30m
-  url: https://opensource.zalando.com/postgres-operator/charts
+  url: https://opensource.zalando.com/postgres-operator/charts/postgres-operator
