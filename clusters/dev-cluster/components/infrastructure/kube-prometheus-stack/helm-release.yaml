@@ -3996,9 +3996,12 @@ spec:
 
         # EnableFeatures API enables access to Prometheus disabled features.
         # ref: https://prometheus.io/docs/prometheus/latest/feature_flags/
-        enableFeatures:
-          - otlp-write-receiver
+        enableFeatures: []
         # - exemplar-storage
+
+        # Prometheus 3.x: --web.enable-otlp-receiver replaces the removed
+        # --enable-feature=otlp-write-receiver flag. Enables /api/v1/otlp/v1/metrics.
+        enableOTLPReceiver: true
 
         ##
         serviceName:

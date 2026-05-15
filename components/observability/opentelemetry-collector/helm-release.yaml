@@ -121,11 +121,15 @@ spec:
             max_requests: 5
             initial_interval: 5s
             max_interval: 30s
-        prometheusremotewrite/kps:
-          endpoint: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090/api/v1/write
-          target_info:
-            enabled: true
-          remote_write_queue:
+        # Prometheus 3.x: use OTLP/HTTP exporter against the native OTLP
+        # receiver (/api/v1/otlp/v1/metrics, gated by --web.enable-otlp-receiver).
+        # The prometheusremotewrite exporter still reports success against
+        # Prometheus 3.x but only `target_info` actually lands — histogram
+        # buckets get silently dropped in the PRW1 → Prom3 translation.
+        otlphttp/kps:
+          metrics_endpoint: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090/api/v1/otlp/v1/metrics
+          encoding: proto
+          sending_queue:
             enabled: true
             queue_size: 10000
             num_consumers: 5
@@ -150,4 +154,4 @@ spec:
           metrics:
             receivers: [otlp]
             processors: [memory_limiter, batch]
-            exporters: [prometheusremotewrite/kps, debug]
+            exporters: [otlphttp/kps, debug]
