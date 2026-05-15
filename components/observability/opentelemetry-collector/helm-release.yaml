@@ -137,7 +137,9 @@ spec:
             enabled: true
             max_elapsed_time: 5m
         debug:
-          verbosity: basic
+          # TEMP: detailed verbosity to debug Claude Code metric ingestion.
+          # Revert to "basic" once claude_code.* metrics are confirmed.
+          verbosity: detailed
       service:
         telemetry:
           metrics:
