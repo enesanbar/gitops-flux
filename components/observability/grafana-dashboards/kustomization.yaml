@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+
+# Grafana's sidecar-based dashboard provisioning watches every namespace
+# for ConfigMaps with label grafana_dashboard: "1" (kps default) and
+# loads any JSON they contain. configMapGenerator keeps the dashboard
+# source as a real .json file in the repo (reviewable, version-controlled)
+# while still rendering as a ConfigMap at apply time.
+configMapGenerator:
+  - name: grafana-dashboard-claude-code
+    files:
+      - claude-code-dashboard.json
+
+generatorOptions:
+  # Without this, configMapGenerator appends a content hash to the
+  # ConfigMap name on every edit — Grafana would treat each as a new
+  # dashboard. Disable so updates replace in place.
+  disableNameSuffixHash: true
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: claude-code

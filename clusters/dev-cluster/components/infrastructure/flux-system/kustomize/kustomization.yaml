@@ -6,6 +6,7 @@ resources:
 - cert-manager.yaml
 - elasticsearch.yaml
 - filebeat.yaml
+- grafana-observability-dashboards.yaml
 - grafana-observability-datasources.yaml
 - headlamp.yaml
 - ingress-nginx.yaml

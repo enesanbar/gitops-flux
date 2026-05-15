@@ -1,0 +1,511 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Claude Code usage, cost, tokens, sessions, and productivity. Metrics emitted by the Claude Code OTel SDK and ingested via the OTel Collector → Prometheus OTLP receiver pipeline.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "type": "row",
+      "id": 100,
+      "title": "Headline",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Total Cost",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+      "targets": [{
+        "expr": "sum({__name__=\"claude_code.cost.usage_USD_total\", \"user.id\"=~\"$user\", model=~\"$model\"})",
+        "refId": "A",
+        "legendFormat": "USD"
+      }],
+      "fieldConfig": {"defaults": {"unit": "currencyUSD", "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 50}, {"color": "red", "value": 200}]}}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background_solid", "graphMode": "area", "textMode": "value"}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Total Tokens",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 1},
+      "targets": [{
+        "expr": "sum({__name__=\"claude_code.token.usage_tokens_total\", \"user.id\"=~\"$user\", model=~\"$model\"})",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 1, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green"}]}}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area", "textMode": "value"}
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Sessions",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1},
+      "targets": [{
+        "expr": "sum({__name__=\"claude_code.session.count_total\", \"user.id\"=~\"$user\"})",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area", "textMode": "value"}
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Active Time",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1},
+      "targets": [{
+        "expr": "sum({__name__=\"claude_code.active_time.total_seconds_total\", \"user.id\"=~\"$user\"})",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit": "s", "decimals": 0}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area", "textMode": "value"}
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Lines of Code",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1},
+      "targets": [{
+        "expr": "sum by (type) ({__name__=\"claude_code.lines_of_code.count_total\", \"user.id\"=~\"$user\"})",
+        "refId": "A",
+        "legendFormat": "{{type}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area", "textMode": "value_and_name"}
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Commits / PRs",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1},
+      "targets": [
+        {"expr": "sum({__name__=\"claude_code.commit.count_total\", \"user.id\"=~\"$user\"}) or vector(0)", "refId": "A", "legendFormat": "Commits"},
+        {"expr": "sum({__name__=\"claude_code.pull_request.count_total\", \"user.id\"=~\"$user\"}) or vector(0)", "refId": "B", "legendFormat": "PRs"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name"}
+    },
+    {
+      "type": "row",
+      "id": 101,
+      "title": "Usage limits (rolling windows)",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 10,
+      "type": "gauge",
+      "title": "Tokens used in last 5h",
+      "description": "Anthropic enforces a 5-hour rolling token allowance. Adjust the limit variable to match your plan.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 6},
+      "targets": [{
+        "expr": "sum(increase({__name__=\"claude_code.token.usage_tokens_total\", \"user.id\"=~\"$user\", model=~\"$model\"}[5h]))",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "max": null, "thresholds": {"mode": "percentage", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 60}, {"color": "orange", "value": 80}, {"color": "red", "value": 95}]}, "decimals": 0}, "overrides": [{"matcher": {"id": "byName", "options": "Tokens used in last 5h"}, "properties": [{"id": "max", "value": "$tokens_limit_5h"}]}]},
+      "options": {"showThresholdLabels": false, "showThresholdMarkers": true, "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 11,
+      "type": "gauge",
+      "title": "Tokens used in last 7d",
+      "description": "Weekly token usage. Set tokens_limit_weekly to match your plan.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 6},
+      "targets": [{
+        "expr": "sum(increase({__name__=\"claude_code.token.usage_tokens_total\", \"user.id\"=~\"$user\", model=~\"$model\"}[7d]))",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "thresholds": {"mode": "percentage", "steps": [{"color": "green"}, {"color": "yellow", "value": 60}, {"color": "orange", "value": 80}, {"color": "red", "value": 95}]}, "decimals": 0}, "overrides": [{"matcher": {"id": "byName", "options": "Tokens used in last 7d"}, "properties": [{"id": "max", "value": "$tokens_limit_weekly"}]}]},
+      "options": {"showThresholdLabels": false, "showThresholdMarkers": true, "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Token burn rate (per minute, by type)",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "targets": [{
+        "expr": "sum by (type) (rate({__name__=\"claude_code.token.usage_tokens_total\", \"user.id\"=~\"$user\", model=~\"$model\"}[5m])) * 60",
+        "refId": "A",
+        "legendFormat": "{{type}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "fillOpacity": 30, "lineWidth": 1, "stacking": {"mode": "normal"}}}},
+      "options": {"legend": {"calcs": ["mean", "max", "lastNotNull"], "displayMode": "table", "placement": "right"}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "row",
+      "id": 102,
+      "title": "Cost breakdown",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 14},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 20,
+      "type": "piechart",
+      "title": "Cost by model",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 15},
+      "targets": [{
+        "expr": "sum by (model) ({__name__=\"claude_code.cost.usage_USD_total\", \"user.id\"=~\"$user\", model=~\"$model\"})",
+        "refId": "A",
+        "legendFormat": "{{model}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "currencyUSD", "decimals": 2}},
+      "options": {"pieType": "donut", "displayLabels": ["percent"], "legend": {"displayMode": "table", "values": ["value", "percent"]}, "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 21,
+      "type": "piechart",
+      "title": "Cost by query source",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 15},
+      "targets": [{
+        "expr": "sum by (query_source) ({__name__=\"claude_code.cost.usage_USD_total\", \"user.id\"=~\"$user\", model=~\"$model\"})",
+        "refId": "A",
+        "legendFormat": "{{query_source}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "currencyUSD", "decimals": 2}},
+      "options": {"pieType": "donut", "displayLabels": ["percent"], "legend": {"displayMode": "table", "values": ["value", "percent"]}, "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Cost over time (stacked by model)",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 15},
+      "targets": [{
+        "expr": "sum by (model) (rate({__name__=\"claude_code.cost.usage_USD_total\", \"user.id\"=~\"$user\", model=~\"$model\"}[$__rate_interval]) * $__rate_interval)",
+        "refId": "A",
+        "legendFormat": "{{model}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "currencyUSD", "decimals": 4, "custom": {"drawStyle": "bars", "fillOpacity": 80, "stacking": {"mode": "normal"}}}},
+      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 23,
+      "type": "bargauge",
+      "title": "Cost by user",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 23},
+      "targets": [{
+        "expr": "topk(10, sum by (\"user.id\") ({__name__=\"claude_code.cost.usage_USD_total\", \"user.id\"=~\"$user\", model=~\"$model\"}))",
+        "refId": "A",
+        "legendFormat": "{{user.id}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "currencyUSD", "decimals": 2}},
+      "options": {"orientation": "horizontal", "displayMode": "gradient", "reduceOptions": {"calcs": ["lastNotNull"]}, "showUnfilled": true}
+    },
+    {
+      "id": 24,
+      "type": "bargauge",
+      "title": "Cost by team",
+      "description": "Requires OTEL_RESOURCE_ATTRIBUTES=\"team.id=…\" set on the client.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 23},
+      "targets": [{
+        "expr": "sum by (\"team.id\") ({__name__=\"claude_code.cost.usage_USD_total\", \"user.id\"=~\"$user\", \"team.id\"=~\"$team\"})",
+        "refId": "A",
+        "legendFormat": "{{team.id}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "currencyUSD", "decimals": 2, "noValue": "no team.id label set — see panel description"}},
+      "options": {"orientation": "horizontal", "displayMode": "gradient", "reduceOptions": {"calcs": ["lastNotNull"]}, "showUnfilled": true}
+    },
+    {
+      "type": "row",
+      "id": 103,
+      "title": "Token usage",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 31},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Token usage by type (stacked)",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+      "targets": [{
+        "expr": "sum by (type) (rate({__name__=\"claude_code.token.usage_tokens_total\", \"user.id\"=~\"$user\", model=~\"$model\"}[$__rate_interval]) * $__rate_interval)",
+        "refId": "A",
+        "legendFormat": "{{type}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "bars", "fillOpacity": 80, "stacking": {"mode": "normal"}}}},
+      "options": {"legend": {"calcs": ["sum", "mean", "max"], "displayMode": "table", "placement": "right"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 31,
+      "type": "piechart",
+      "title": "Tokens by model",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 32},
+      "targets": [{
+        "expr": "sum by (model) ({__name__=\"claude_code.token.usage_tokens_total\", \"user.id\"=~\"$user\", model=~\"$model\"})",
+        "refId": "A",
+        "legendFormat": "{{model}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "options": {"pieType": "donut", "displayLabels": ["percent"], "legend": {"displayMode": "table", "values": ["value", "percent"]}, "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 32,
+      "type": "stat",
+      "title": "Cache hit ratio",
+      "description": "cacheRead / (cacheRead + cacheCreation + input). Higher = more reuse of cached context.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 32},
+      "targets": [{
+        "expr": "sum({__name__=\"claude_code.token.usage_tokens_total\", type=\"cacheRead\", \"user.id\"=~\"$user\", model=~\"$model\"}) / sum({__name__=\"claude_code.token.usage_tokens_total\", type=~\"cacheRead|cacheCreation|input\", \"user.id\"=~\"$user\", model=~\"$model\"})",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 1, "thresholds": {"mode": "absolute", "steps": [{"color": "red"}, {"color": "yellow", "value": 0.3}, {"color": "green", "value": 0.6}]}}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "none", "textMode": "value"}
+    },
+    {
+      "type": "row",
+      "id": 104,
+      "title": "Sessions",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 40},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 40,
+      "type": "piechart",
+      "title": "Sessions by start type",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 41},
+      "targets": [{
+        "expr": "sum by (start_type) ({__name__=\"claude_code.session.count_total\", \"user.id\"=~\"$user\"})",
+        "refId": "A",
+        "legendFormat": "{{start_type}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "options": {"pieType": "donut", "displayLabels": ["percent"], "legend": {"displayMode": "table", "values": ["value", "percent"]}, "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "New sessions over time",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 41},
+      "targets": [{
+        "expr": "sum by (start_type) (increase({__name__=\"claude_code.session.count_total\", \"user.id\"=~\"$user\"}[$__rate_interval]))",
+        "refId": "A",
+        "legendFormat": "{{start_type}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "custom": {"drawStyle": "bars", "fillOpacity": 80, "stacking": {"mode": "normal"}}}},
+      "options": {"legend": {"calcs": ["sum"], "displayMode": "list", "placement": "bottom"}}
+    },
+    {
+      "id": 42,
+      "type": "stat",
+      "title": "Avg active time per session",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 41},
+      "targets": [{
+        "expr": "sum({__name__=\"claude_code.active_time.total_seconds_total\", \"user.id\"=~\"$user\"}) / (sum({__name__=\"claude_code.session.count_total\", \"user.id\"=~\"$user\"}) > 0)",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit": "s", "decimals": 0}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area", "textMode": "value"}
+    },
+    {
+      "type": "row",
+      "id": 105,
+      "title": "Productivity",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 49},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 50,
+      "type": "timeseries",
+      "title": "Lines of code (added/removed)",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 50},
+      "targets": [{
+        "expr": "sum by (type) (increase({__name__=\"claude_code.lines_of_code.count_total\", \"user.id\"=~\"$user\"}[$__rate_interval]))",
+        "refId": "A",
+        "legendFormat": "{{type}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "custom": {"drawStyle": "bars", "fillOpacity": 80}}, "overrides": [{"matcher": {"id": "byName", "options": "removed"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]}, {"matcher": {"id": "byName", "options": "added"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]}]},
+      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "right"}}
+    },
+    {
+      "id": 51,
+      "type": "piechart",
+      "title": "Edit-tool decisions (accept vs reject)",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 50},
+      "targets": [{
+        "expr": "sum by (decision) ({__name__=\"claude_code.code_edit_tool.decision_total\", \"user.id\"=~\"$user\"})",
+        "refId": "A",
+        "legendFormat": "{{decision}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "options": {"pieType": "donut", "displayLabels": ["percent"], "legend": {"displayMode": "list", "values": ["value", "percent"]}, "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 52,
+      "type": "bargauge",
+      "title": "Edit-tool calls by language",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 50},
+      "targets": [{
+        "expr": "topk(10, sum by (language) ({__name__=\"claude_code.code_edit_tool.decision_total\", \"user.id\"=~\"$user\"}))",
+        "refId": "A",
+        "legendFormat": "{{language}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "options": {"orientation": "horizontal", "displayMode": "lcd", "reduceOptions": {"calcs": ["lastNotNull"]}, "showUnfilled": true}
+    },
+    {
+      "type": "row",
+      "id": 106,
+      "title": "Latency (TraceQL span metrics)",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 58},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 60,
+      "type": "timeseries",
+      "title": "LLM request latency (p50/p95/p99)",
+      "description": "Computed by Tempo's metrics-generator from claude_code.llm_request spans.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 59},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum by (le) (rate(traces_spanmetrics_latency_bucket{service=\"claude-code\", span_name=\"claude_code.llm_request\"}[5m])))", "refId": "A", "legendFormat": "p50"},
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{service=\"claude-code\", span_name=\"claude_code.llm_request\"}[5m])))", "refId": "B", "legendFormat": "p95"},
+        {"expr": "histogram_quantile(0.99, sum by (le) (rate(traces_spanmetrics_latency_bucket{service=\"claude-code\", span_name=\"claude_code.llm_request\"}[5m])))", "refId": "C", "legendFormat": "p99"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "decimals": 2, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2}}},
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "right"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 61,
+      "type": "timeseries",
+      "title": "Tool execution latency (p95 by tool)",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 59},
+      "targets": [{
+        "expr": "histogram_quantile(0.95, sum by (le, span_name) (rate(traces_spanmetrics_latency_bucket{service=\"claude-code\", span_name=~\"claude_code.tool.*\"}[5m])))",
+        "refId": "A",
+        "legendFormat": "{{span_name}} p95"
+      }],
+      "fieldConfig": {"defaults": {"unit": "s", "decimals": 2, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 1}}},
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "right"}}
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["claude-code", "observability", "ai", "cost"],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {"selected": false, "text": "Prometheus", "value": "prometheus"},
+        "hide": 0,
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false
+      },
+      {
+        "name": "user",
+        "label": "User ID",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "definition": "label_values({__name__=\"claude_code.cost.usage_USD_total\"}, \"user.id\")",
+        "query": {"query": "label_values({__name__=\"claude_code.cost.usage_USD_total\"}, \"user.id\")", "refId": "PrometheusVariableQueryEditor-VariableQuery"},
+        "current": {"selected": true, "text": "All", "value": "$__all"},
+        "includeAll": true,
+        "multi": true,
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1
+      },
+      {
+        "name": "model",
+        "label": "Model",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "definition": "label_values({__name__=\"claude_code.cost.usage_USD_total\"}, model)",
+        "query": {"query": "label_values({__name__=\"claude_code.cost.usage_USD_total\"}, model)", "refId": "PrometheusVariableQueryEditor-VariableQuery"},
+        "current": {"selected": true, "text": "All", "value": "$__all"},
+        "includeAll": true,
+        "multi": true,
+        "refresh": 2,
+        "sort": 1
+      },
+      {
+        "name": "team",
+        "label": "Team",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "definition": "label_values({__name__=\"claude_code.cost.usage_USD_total\"}, \"team.id\")",
+        "query": {"query": "label_values({__name__=\"claude_code.cost.usage_USD_total\"}, \"team.id\")", "refId": "PrometheusVariableQueryEditor-VariableQuery"},
+        "current": {"selected": true, "text": "All", "value": "$__all"},
+        "includeAll": true,
+        "multi": true,
+        "refresh": 2,
+        "sort": 1,
+        "description": "Populated when clients set OTEL_RESOURCE_ATTRIBUTES=team.id=… on the SDK."
+      },
+      {
+        "name": "tokens_limit_5h",
+        "label": "5h token limit",
+        "type": "constant",
+        "current": {"value": "1000000", "text": "1000000", "selected": false},
+        "query": "1000000",
+        "skipUrlSync": false,
+        "hide": 0,
+        "description": "Set to your plan's 5h token cap so the gauge thresholds are meaningful."
+      },
+      {
+        "name": "tokens_limit_weekly",
+        "label": "Weekly token limit",
+        "type": "constant",
+        "current": {"value": "10000000", "text": "10000000", "selected": false},
+        "query": "10000000",
+        "skipUrlSync": false,
+        "hide": 0
+      }
+    ]
+  },
+  "time": {"from": "now-24h", "to": "now"},
+  "timepicker": {"refresh_intervals": ["10s", "30s", "1m", "5m", "15m", "30m", "1h", "6h", "12h"]},
+  "timezone": "browser",
+  "title": "Claude Code",
+  "uid": "claude-code-usage",
+  "version": 1,
+  "weekStart": ""
+}
