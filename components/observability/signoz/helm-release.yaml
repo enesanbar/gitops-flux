@@ -6,6 +6,7 @@ metadata:
 spec:
   interval: 1h
   releaseName: signoz
+  timeout: 20m
   chart:
     spec:
       chart: signoz
@@ -16,10 +17,14 @@ spec:
         namespace: flux-system
   install:
     crds: CreateReplace
+    disableWait: true
+    disableWaitForJobs: true
     remediation:
       retries: 3
   upgrade:
     crds: CreateReplace
+    disableWait: true
+    disableWaitForJobs: true
     remediation:
       retries: 3
   values:
