@@ -9,6 +9,7 @@ resources:
   - ingress-nginx.yaml
   - jaegertracing.yaml
   - metallb.yaml
+  - nccloud.yaml
   - open-telemetry.yaml
   - prometheus-community.yaml
   - jetstack.yaml

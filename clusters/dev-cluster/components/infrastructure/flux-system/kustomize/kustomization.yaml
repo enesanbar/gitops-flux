@@ -33,4 +33,5 @@ resources:
 - signoz.yaml
 - tempo.yaml
 - tofu-controller.yaml
+- watchtower.yaml
 - weave-gitops.yaml

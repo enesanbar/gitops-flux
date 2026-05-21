@@ -1,0 +1,15 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: watchtower
+  namespace: watchtower
+spec:
+  interval: 1h
+  releaseName: watchtower
+  chart:
+    spec:
+      chart: watchtower
+      sourceRef:
+        kind: HelmRepository
+        name: nccloud
+        namespace: flux-system
