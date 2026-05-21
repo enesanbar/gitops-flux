@@ -21,7 +21,7 @@ fi
 echo "==> Step 2: Create kind cluster"
 export SCRIPT_DIR
 KIND_EXPERIMENTAL_DOCKER_NETWORK="${DOCKER_NETWORK}" \
-  kind create cluster --config <(envsubst < "${SCRIPT_DIR}/config.yaml") --wait 60s
+  kind create cluster --config <(envsubst < "${SCRIPT_DIR}/config.yaml") --wait 60s || true
 
 echo "==> Step 3: Merge kubeconfig"
 kind get kubeconfig --name="${CLUSTER_NAME}" > /tmp/${CLUSTER_NAME}.yaml
