@@ -1,6 +1,11 @@
 # Local Kubernetes Cluster (kind)
 
-Multi-worker Kubernetes cluster running locally via [kind](https://kind.sigs.k8s.io/), with custom domain access (`*.kindcluster.dev`) from your browser.
+Local Kubernetes cluster running via [kind](https://kind.sigs.k8s.io/), with custom domain access (`*.kindcluster.dev`) from your browser. Two topology profiles:
+
+| Profile | Containers | When to use |
+| --- | --- | --- |
+| `single` (default) | 1 (control-plane runs workloads) | Day-to-day dev. ~3× less CPU than `multi`. |
+| `multi` | 3 (1 control-plane + 2 workers) | Testing scheduling, affinity, drains, upgrades. |
 
 ## Prerequisites
 
@@ -14,8 +19,10 @@ Multi-worker Kubernetes cluster running locally via [kind](https://kind.sigs.k8s
 ## Quick Start
 
 ```bash
-# 1. Create the cluster + networking
+# 1. Create the cluster + networking (single-node by default)
 ./start.sh
+# Or, for the 3-node profile:
+./start.sh --topology=multi          # equivalent: KIND_TOPOLOGY=multi ./start.sh
 
 # 2. Bootstrap Flux (first time only, or after a fresh cluster)
 cd /path/to/gitops-flux
@@ -139,15 +146,40 @@ spec:
 
 No DNS changes, no socat changes, no config file editing. The domain resolves automatically via dnsmasq, traffic flows through socat to the MetalLB VIP, and ingress-nginx routes by Host header.
 
-## Cluster Topology
+## Cluster Topology & Storage Pools
 
-```
-config.yaml defines:
-  1x control-plane node
-  2x worker nodes (with persistent volume mounts at /mnt/data)
+### Two profiles
+
+| File | Profile | Nodes | Storage pools on which node |
+| --- | --- | --- | --- |
+| `config.single.yaml` | single | 1 control-plane (untainted) | both `data-pool-1` and `data-pool-2` on the control-plane |
+| `config.multi.yaml`  | multi  | 1 control-plane + 2 workers | `data-pool-1` on worker-1, `data-pool-2` on worker-2 |
+
+### Storage pools — what they are
+
+A "storage pool" is a host directory on the macOS side (`scripts/cluster-setup/kind/data-pool-{1,2}`) bind-mounted into the kind node container at `/mnt/data-pool-{1,2}`. PVs with `hostPath: /mnt/data-pool-N/<subdir>` survive cluster recreations because the data lives on the host.
+
+The host directories are gitignored. `start.sh` creates them if missing and renames any legacy `worker-{1,2}-localpathprovisioner-data/` dirs from previous setups.
+
+### Pinning pods to a pool
+
+Workloads that need pool-local data declare a node selector against the pool label, **not** the hostname:
+
+```yaml
+# Lands on whichever node hosts data-pool-1.
+nodeSelector:
+  gitops-flux.local/data-pool-1: "true"
 ```
 
-Worker nodes mount host directories for persistent storage via local-path-provisioner, so PersistentVolumeClaim data survives pod restarts.
+Why labels and not `kubernetes.io/hostname: local-dind-cluster-worker`? Because the hostname depends on the topology (`...-control-plane` vs `...-worker`) and the index suffix. The pool label is topology-independent: in `single` the lone node carries both labels; in `multi` each worker carries one. Same workload manifest works on either.
+
+### Adding a new pool
+
+If you want a third pool (rare):
+
+1. Add `data-pool-3` to `.gitignore` (already covered by `data-pool-*`).
+2. Add a mount + label to each config (in `single`, also on the control-plane; in `multi`, either pin to an existing worker or add a third).
+3. Reference it from your PV as `hostPath: /mnt/data-pool-3/<subdir>` and from your pod as `nodeSelector: gitops-flux.local/data-pool-3: "true"`.
 
 ## Troubleshooting
 

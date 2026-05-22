@@ -10,7 +10,7 @@ spec:
   capacity:
     storage: 2Gi
   hostPath:
-    path: /mnt/data/keycloak-postgres-data
+    path: /mnt/data-pool-1/keycloak-postgres-data
   claimRef:
     namespace: keycloak
     name: keycloak-postgres-data

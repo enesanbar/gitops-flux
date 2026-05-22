@@ -16,8 +16,12 @@ spec:
       labels:
         app: postgres
     spec:
+      # Pinned to the node that hosts data-pool-1 because the bound PV is a
+      # local hostPath. Topology-independent: works on the single-node profile
+      # (control-plane labeled with both pools) and the multi-node profile
+      # (worker-1 labeled with pool-1).
       nodeSelector:
-        kubernetes.io/hostname: local-dind-cluster-worker
+        gitops-flux.local/data-pool-1: "true"
 
       containers:
         - name: postgres

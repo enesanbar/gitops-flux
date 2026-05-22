@@ -1,0 +1,34 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: local-dind-cluster
+networking:
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: "10.96.0.0/16"
+nodes:
+  # Multi-node profile (for testing scheduling, affinity, drain, upgrades, etc.).
+  # Each worker owns one storage pool: data-pool-1 -> worker-1, data-pool-2 -> worker-2.
+  # Pool labels are what workloads should select on — not kubernetes.io/hostname.
+  - role: control-plane
+    image: kindest/node:v1.35.1@sha256:05d7bcdefbda08b4e038f644c4df690cdac3fba8b06f8289f30e10026720a1ab
+  - role: worker
+    image: kindest/node:v1.35.1@sha256:05d7bcdefbda08b4e038f644c4df690cdac3fba8b06f8289f30e10026720a1ab
+    kubeadmConfigPatches:
+      - |
+        kind: JoinConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "gitops-flux.local/data-pool-1=true"
+    extraMounts:
+      - hostPath: ${SCRIPT_DIR}/data-pool-1
+        containerPath: /mnt/data-pool-1
+  - role: worker
+    image: kindest/node:v1.35.1@sha256:05d7bcdefbda08b4e038f644c4df690cdac3fba8b06f8289f30e10026720a1ab
+    kubeadmConfigPatches:
+      - |
+        kind: JoinConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "gitops-flux.local/data-pool-2=true"
+    extraMounts:
+      - hostPath: ${SCRIPT_DIR}/data-pool-2
+        containerPath: /mnt/data-pool-2

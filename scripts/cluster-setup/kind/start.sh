@@ -7,6 +7,47 @@ NETWORK_SUBNET="172.88.0.0/16"
 INGRESS_VIP="172.88.0.200"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Topology selection. Default: single-node (1 untainted control-plane carrying
+# both storage pools). Use multi for testing scheduling / affinity / drains.
+TOPOLOGY="${KIND_TOPOLOGY:-single}"
+for arg in "$@"; do
+  case "${arg}" in
+    --topology=*) TOPOLOGY="${arg#*=}" ;;
+    -h|--help)
+      cat <<EOF
+Usage: $(basename "$0") [--topology=single|multi]
+
+Profiles:
+  single  (default) 1 control-plane, both data pools mounted on it
+  multi             1 control-plane + 2 workers, one data pool per worker
+
+Env var KIND_TOPOLOGY=single|multi works as an alternative.
+EOF
+      exit 0
+      ;;
+  esac
+done
+
+case "${TOPOLOGY}" in
+  single) CONFIG_FILE="${SCRIPT_DIR}/config.single.yaml" ;;
+  multi)  CONFIG_FILE="${SCRIPT_DIR}/config.multi.yaml" ;;
+  *) echo "ERROR: unknown topology '${TOPOLOGY}' (expected: single | multi)" >&2; exit 2 ;;
+esac
+
+echo "==> Topology: ${TOPOLOGY}  (config: $(basename "${CONFIG_FILE}"))"
+
+echo "==> Step 0: Migrate legacy host-data directories (if present)"
+# Rename old per-worker dir names to the pool-based names used by both configs.
+# Idempotent: only acts when the old name exists and the new one doesn't.
+for pair in "worker-1-localpathprovisioner-data:data-pool-1" "worker-2-localpathprovisioner-data:data-pool-2"; do
+  old="${pair%:*}"; new="${pair#*:}"
+  if [ -d "${SCRIPT_DIR}/${old}" ] && [ ! -e "${SCRIPT_DIR}/${new}" ]; then
+    echo "    Renaming ${old} -> ${new}"
+    mv "${SCRIPT_DIR}/${old}" "${SCRIPT_DIR}/${new}"
+  fi
+done
+mkdir -p "${SCRIPT_DIR}/data-pool-1" "${SCRIPT_DIR}/data-pool-2"
+
 echo "==> Step 1: Create dedicated Docker network (if not exists)"
 if ! docker network inspect "${DOCKER_NETWORK}" >/dev/null 2>&1; then
   docker network create \
@@ -21,7 +62,7 @@ fi
 echo "==> Step 2: Create kind cluster"
 export SCRIPT_DIR
 KIND_EXPERIMENTAL_DOCKER_NETWORK="${DOCKER_NETWORK}" \
-  kind create cluster --config <(envsubst < "${SCRIPT_DIR}/config.yaml") --wait 60s || true
+  kind create cluster --config <(envsubst < "${CONFIG_FILE}") --wait 60s || true
 
 echo "==> Step 3: Merge kubeconfig"
 kind get kubeconfig --name="${CLUSTER_NAME}" > /tmp/${CLUSTER_NAME}.yaml
@@ -70,7 +111,7 @@ RESOLVER
 fi
 
 echo ""
-echo "==> Cluster is ready!"
+echo "==> Cluster is ready!  (topology: ${TOPOLOGY})"
 echo "    Ingress VIP: ${INGRESS_VIP}"
 echo "    DNS: *.kindcluster.dev -> 127.0.0.1 (via dnsmasq on port 15353)"
 echo "    Proxy: 127.0.0.1:80/443 -> ${INGRESS_VIP}:80/443 (via socat)"
