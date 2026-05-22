@@ -11,6 +11,6 @@ spec:
   sourceRef:
     kind: GitRepository
     name: flux-system
-  path: ./clusters/dev-cluster/components/infrastructure/flux-system/watchtower
+  path: ./clusters/dev-cluster/components/infrastructure/watchtower
   prune: true
   wait: true
