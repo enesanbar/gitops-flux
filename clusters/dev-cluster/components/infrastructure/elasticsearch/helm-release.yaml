@@ -7,6 +7,16 @@ spec:
   values:
     replicas: 1
 
+    # The readiness probe runs `GET /_cluster/health?wait_for_status=…` with whatever value this is set to.
+    # The chart default is `green`, which a single-node cluster can never reach:
+    # any index that defaults to number_of_replicas>=1 will have an unassigned replica shard
+    # (impossible to allocate with 1 node) and the cluster stays yellow.
+    #
+    # Result: pod runs but readiness probe fails forever and the StatefulSet never becomes Ready.
+    # `yellow` accepts "all primaries allocated, replicas optional"
+    # which is the right bar for a single-node dev cluster.
+    clusterHealthCheckParams: "wait_for_status=yellow&timeout=1s"
+
     secret:
       enabled: true
       password: "password" # move to external secret
