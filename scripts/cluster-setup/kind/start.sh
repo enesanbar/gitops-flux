@@ -36,16 +36,6 @@ esac
 
 echo "==> Topology: ${TOPOLOGY}  (config: $(basename "${CONFIG_FILE}"))"
 
-echo "==> Step 0: Migrate legacy host-data directories (if present)"
-# Rename old per-worker dir names to the pool-based names used by both configs.
-# Idempotent: only acts when the old name exists and the new one doesn't.
-for pair in "worker-1-localpathprovisioner-data:data-pool-1" "worker-2-localpathprovisioner-data:data-pool-2"; do
-  old="${pair%:*}"; new="${pair#*:}"
-  if [ -d "${SCRIPT_DIR}/${old}" ] && [ ! -e "${SCRIPT_DIR}/${new}" ]; then
-    echo "    Renaming ${old} -> ${new}"
-    mv "${SCRIPT_DIR}/${old}" "${SCRIPT_DIR}/${new}"
-  fi
-done
 mkdir -p "${SCRIPT_DIR}/data-pool-1" "${SCRIPT_DIR}/data-pool-2"
 
 echo "==> Step 1: Create dedicated Docker network (if not exists)"

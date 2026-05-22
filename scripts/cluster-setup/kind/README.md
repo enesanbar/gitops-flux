@@ -159,7 +159,7 @@ No DNS changes, no socat changes, no config file editing. The domain resolves au
 
 A "storage pool" is a host directory on the macOS side (`scripts/cluster-setup/kind/data-pool-{1,2}`) bind-mounted into the kind node container at `/mnt/data-pool-{1,2}`. PVs with `hostPath: /mnt/data-pool-N/<subdir>` survive cluster recreations because the data lives on the host.
 
-The host directories are gitignored. `start.sh` creates them if missing and renames any legacy `worker-{1,2}-localpathprovisioner-data/` dirs from previous setups.
+The host directories are gitignored. `start.sh` creates them if missing.
 
 ### Pinning pods to a pool
 
