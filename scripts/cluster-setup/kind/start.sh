@@ -61,8 +61,12 @@ fi
 
 echo "==> Step 2: Create kind cluster"
 export SCRIPT_DIR
-KIND_EXPERIMENTAL_DOCKER_NETWORK="${DOCKER_NETWORK}" \
-  kind create cluster --config <(envsubst < "${CONFIG_FILE}") --wait 60s || true
+if kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}"; then
+  echo "    Cluster ${CLUSTER_NAME} already exists, skipping create (delete it first to switch topology)"
+else
+  KIND_EXPERIMENTAL_DOCKER_NETWORK="${DOCKER_NETWORK}" \
+    kind create cluster --config <(envsubst < "${CONFIG_FILE}") --wait 60s
+fi
 
 echo "==> Step 3: Merge kubeconfig"
 kind get kubeconfig --name="${CLUSTER_NAME}" > /tmp/${CLUSTER_NAME}.yaml
