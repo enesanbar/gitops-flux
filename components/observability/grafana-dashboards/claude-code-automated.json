@@ -90,7 +90,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"})",
+          "expr": "sum(max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"}[$__range]))",
           "legendFormat": "USD"
         }
       ],
@@ -154,7 +154,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum({__name__=\"claude_code.token.usage_tokens_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"})"
+          "expr": "sum(max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"}[$__range]))"
         }
       ],
       "fieldConfig": {
@@ -197,7 +197,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum({__name__=\"claude_code.session.count_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"})"
+          "expr": "sum(max_over_time({__name__=\"claude_code.session.count_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"}[$__range]))"
         }
       ],
       "fieldConfig": {
@@ -240,7 +240,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "count(count by (\"run.role\") ({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"})) or vector(0)"
+          "expr": "count(count by (\"run.role\") (max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"}[$__range]))) or vector(0)"
         }
       ],
       "fieldConfig": {
@@ -283,7 +283,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"}) / (count(count by (\"session.id\") ({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"})) > 0)"
+          "expr": "sum(max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"}[$__range])) / (count(count by (\"session.id\") (max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"}[$__range]))) > 0)"
         }
       ],
       "fieldConfig": {
@@ -327,7 +327,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum({__name__=\"claude_code.active_time.total_seconds_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"})"
+          "expr": "sum(max_over_time({__name__=\"claude_code.active_time.total_seconds_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"}[$__range]))"
         }
       ],
       "fieldConfig": {
@@ -383,7 +383,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (\"run.role\") ({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"})",
+          "expr": "sum by (\"run.role\") (max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"}[$__range]))",
           "legendFormat": "{{run.role}}"
         }
       ],
@@ -434,7 +434,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (\"run.role\") ({__name__=\"claude_code.token.usage_tokens_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"})",
+          "expr": "sum by (\"run.role\") (max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"}[$__range]))",
           "legendFormat": "{{run.role}}"
         }
       ],
@@ -485,7 +485,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (\"run.role\") (rate({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"}[$__rate_interval]) * $__rate_interval)",
+          "expr": "sum by (\"run.role\") (increase({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"}[$__interval]))",
           "legendFormat": "{{run.role}}"
         }
       ],
@@ -507,7 +507,8 @@
       "options": {
         "legend": {
           "calcs": [
-            "sum"
+            "mean",
+            "max"
           ],
           "displayMode": "table",
           "placement": "right"
@@ -539,7 +540,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "topk(15, sum by (\"run.task\") ({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"}))",
+          "expr": "topk(15, sum by (\"run.task\") (max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"}[$__range])))",
           "legendFormat": "{{run.task}}"
         }
       ],
@@ -581,7 +582,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "topk(15, sum by (\"run.user\") ({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"}))",
+          "expr": "topk(15, sum by (\"run.user\") (max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"}[$__range])))",
           "legendFormat": "{{run.user}}"
         }
       ],
@@ -636,7 +637,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "topk(25, sum by (\"session.id\", \"run.role\", \"run.task\", \"run.user\") ({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\"}))",
+          "expr": "topk(25, sum by (\"session.id\", \"run.role\", \"run.task\", \"run.user\") (max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\"}[$__range])))",
           "instant": true,
           "format": "table",
           "range": false
@@ -647,7 +648,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (\"session.id\", \"run.role\", \"run.task\", \"run.user\") ({__name__=\"claude_code.token.usage_tokens_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\"}) and on (\"session.id\") topk(25, sum by (\"session.id\") ({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\"}))",
+          "expr": "sum by (\"session.id\", \"run.role\", \"run.task\", \"run.user\") (max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\"}[$__range])) and on (\"session.id\") topk(25, sum by (\"session.id\") (max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\"}[$__range])))",
           "instant": true,
           "format": "table",
           "range": false
@@ -747,7 +748,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum({__name__=\"claude_code.token.usage_tokens_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\", type=\"cacheRead\"}) / (sum({__name__=\"claude_code.token.usage_tokens_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\", type=~\"cacheRead|cacheCreation|input\"}) > 0)"
+          "expr": "sum(max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\", type=\"cacheRead\"}[$__range])) / (sum(max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\", type=~\"cacheRead|cacheCreation|input\"}[$__range])) > 0)"
         }
       ],
       "fieldConfig": {
@@ -810,7 +811,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (model) ({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"})",
+          "expr": "sum by (model) (max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"run.mode\"=\"automated\", \"run.user\"=~\"$auser\", \"run.role\"=~\"$role\", \"run.task\"=~\"$task\", model=~\"$model\", effort=~\"$effort\", \"team.id\"=~\"$team\", \"run.env\"=~\"$env\", \"session.id\"=~\"$session\"}[$__range]))",
           "legendFormat": "{{model}}"
         }
       ],

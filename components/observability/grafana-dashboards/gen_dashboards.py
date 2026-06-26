@@ -304,41 +304,42 @@ def build_overview():
              {"color": "yellow", "value": 50}, {"color": "red", "value": 200}]}
 
     b.row("Headline")
-    b.stat("Total Cost", [{"expr": f"sum({sel(COST, FULL)})", "legend": "USD"}],
+    b.stat("Total Cost", [{"expr": f"sum(max_over_time({sel(COST, FULL)}[$__range]))", "legend": "USD"}],
            unit="currencyUSD", decimals=2, color="bgsolid", thresholds=GREEN)
-    b.stat("Total Tokens", [{"expr": f"sum({sel(TOK, FULL)})"}], unit="short", decimals=1)
-    b.stat("Sessions", [{"expr": f"sum({sel(SESS, BASE)})"}])
-    b.stat("Active Time", [{"expr": f"sum({sel(ACT, BASE)})"}], unit="s")
-    b.stat("Lines of Code", [{"expr": f"sum by (type) ({sel(LOC, BASE)})", "legend": "{{type}}"}],
+    b.stat("Total Tokens", [{"expr": f"sum(max_over_time({sel(TOK, FULL)}[$__range]))"}], unit="short", decimals=1)
+    b.stat("Sessions", [{"expr": f"sum(max_over_time({sel(SESS, BASE)}[$__range]))"}])
+    b.stat("Active Time", [{"expr": f"sum(max_over_time({sel(ACT, BASE)}[$__range]))"}], unit="s")
+    b.stat("Lines of Code", [{"expr": f"sum by (type) (max_over_time({sel(LOC, BASE)}[$__range]))", "legend": "{{type}}"}],
            text="value_and_name")
     b.stat("Commits / PRs",
-           [{"expr": f"sum({sel(COMMIT, BASE)}) or vector(0)", "legend": "Commits"},
-            {"expr": f"sum({sel(PR, BASE)}) or vector(0)", "legend": "PRs"}],
+           [{"expr": f"sum(max_over_time({sel(COMMIT, BASE)}[$__range])) or vector(0)", "legend": "Commits"},
+            {"expr": f"sum(max_over_time({sel(PR, BASE)}[$__range])) or vector(0)", "legend": "PRs"}],
            graph="none", text="value_and_name")
 
     b.row("Cost breakdown")
-    b.pie("Cost by model", [{"expr": f"sum by (model) ({sel(COST, FULL)})", "legend": "{{model}}"}],
+    b.pie("Cost by model", [{"expr": f"sum by (model) (max_over_time({sel(COST, FULL)}[$__range]))", "legend": "{{model}}"}],
           unit="currencyUSD")
-    b.pie("Cost by mode", [{"expr": f'sum by ("run.mode") ({sel(COST, FULL)})', "legend": "{{run.mode}}"}],
+    b.pie("Cost by mode", [{"expr": f'sum by ("run.mode") (max_over_time({sel(COST, FULL)}[$__range]))', "legend": "{{run.mode}}"}],
           unit="currencyUSD", desc="interactive / automated / workflow — set via run.mode in OTEL_RESOURCE_ATTRIBUTES.")
-    b.pie("Cost by query source", [{"expr": f"sum by (query_source) ({sel(COST, FULL)})", "legend": "{{query_source}}"}],
+    b.pie("Cost by query source", [{"expr": f"sum by (query_source) (max_over_time({sel(COST, FULL)}[$__range]))", "legend": "{{query_source}}"}],
           unit="currencyUSD", desc="main / subagent / auxiliary")
     b.timeseries("Cost over time (by model)",
-                 [{"expr": f"sum by (model) (rate({sel(COST, FULL)}[$__rate_interval]) * $__rate_interval)", "legend": "{{model}}"}],
-                 w=12, unit="currencyUSD", draw="bars", fill=80, stack=True, decimals=4, legend_calcs=["sum"])
-    b.bargauge("Cost by effort", [{"expr": f"sum by (effort) ({sel(COST, FULL)})", "legend": "{{effort}}"}],
+                 [{"expr": f"sum by (model) (increase({sel(COST, FULL)}[$__interval]))", "legend": "{{model}}"}],
+                 w=12, unit="currencyUSD", draw="bars", fill=80, stack=True, decimals=4, legend_calcs=["mean", "max"],
+                 desc="Per-interval spend (trend). Authoritative totals are in the headline / pies / tables.")
+    b.bargauge("Cost by effort", [{"expr": f"sum by (effort) (max_over_time({sel(COST, FULL)}[$__range]))", "legend": "{{effort}}"}],
                w=6, unit="currencyUSD", desc="Effort level applied to the request (low/medium/high/xhigh/max).")
     # Cost AND tokens per user/team (Goal 2: tokens with their costs, by user & team)
     b.table("Cost & tokens by user",
-            [{"expr": f'topk(15, sum by ("user.email") ({sel(COST, FULL)}))', "instant": True, "refId": "A"},
-             {"expr": f'sum by ("user.email") ({sel(TOK, FULL)}) and on ("user.email") topk(15, sum by ("user.email") ({sel(COST, FULL)}))',
+            [{"expr": f'topk(15, sum by ("user.email") (max_over_time({sel(COST, FULL)}[$__range])))', "instant": True, "refId": "A"},
+             {"expr": f'sum by ("user.email") (max_over_time({sel(TOK, FULL)}[$__range])) and on ("user.email") topk(15, sum by ("user.email") (max_over_time({sel(COST, FULL)}[$__range])))',
               "instant": True, "refId": "B"}],
             w=12, h=8,
             rename={"user.email": "User", "Value #A": "Cost ($)", "Value #B": "Tokens"},
             units={"Cost ($)": "currencyUSD", "Tokens": "short"}, desc="Spend and token volume per user.")
     b.table("Cost & tokens by team",
-            [{"expr": f'sum by ("team.id") ({sel(COST, FULL)})', "instant": True, "refId": "A"},
-             {"expr": f'sum by ("team.id") ({sel(TOK, FULL)})', "instant": True, "refId": "B"}],
+            [{"expr": f'sum by ("team.id") (max_over_time({sel(COST, FULL)}[$__range]))', "instant": True, "refId": "A"},
+             {"expr": f'sum by ("team.id") (max_over_time({sel(TOK, FULL)}[$__range]))', "instant": True, "refId": "B"}],
             w=12, h=8,
             rename={"team.id": "Team", "Value #A": "Cost ($)", "Value #B": "Tokens"},
             units={"Cost ($)": "currencyUSD", "Tokens": "short"},
@@ -347,9 +348,9 @@ def build_overview():
     # the same top-25-by-cost sessions as A (via `and on`) so the merge has no
     # token-only blank-cost rows. A session can span models, so model is omitted.
     b.table("Top sessions by cost",
-            [{"expr": f'topk(25, sum by ("session.id", "run.mode", "user.email") ({sel(COST, FULL_NS)}))',
+            [{"expr": f'topk(25, sum by ("session.id", "run.mode", "user.email") (max_over_time({sel(COST, FULL_NS)}[$__range])))',
               "instant": True, "refId": "A"},
-             {"expr": f'sum by ("session.id", "run.mode", "user.email") ({sel(TOK, FULL_NS)}) and on ("session.id") topk(25, sum by ("session.id") ({sel(COST, FULL_NS)}))',
+             {"expr": f'sum by ("session.id", "run.mode", "user.email") (max_over_time({sel(TOK, FULL_NS)}[$__range])) and on ("session.id") topk(25, sum by ("session.id") (max_over_time({sel(COST, FULL_NS)}[$__range])))',
               "instant": True, "refId": "B"}],
             w=24, h=10,
             rename={"session.id": "Session", "run.mode": "Mode", "user.email": "User",
@@ -359,22 +360,23 @@ def build_overview():
 
     b.row("Token usage")
     b.timeseries("Token usage by type (stacked)",
-                 [{"expr": f"sum by (type) (rate({sel(TOK, FULL)}[$__rate_interval]) * $__rate_interval)", "legend": "{{type}}"}],
-                 w=12, draw="bars", fill=80, stack=True, legend_calcs=["sum", "mean", "max"], place="right")
-    b.pie("Tokens by model", [{"expr": f"sum by (model) ({sel(TOK, FULL)})", "legend": "{{model}}"}], w=6)
+                 [{"expr": f"sum by (type) (increase({sel(TOK, FULL)}[$__interval]))", "legend": "{{type}}"}],
+                 w=12, draw="bars", fill=80, stack=True, legend_calcs=["mean", "max"], place="right",
+                 desc="Per-interval token volume (trend). Authoritative totals are in the headline / pies / tables.")
+    b.pie("Tokens by model", [{"expr": f"sum by (model) (max_over_time({sel(TOK, FULL)}[$__range]))", "legend": "{{model}}"}], w=6)
     b.stat("Cache hit ratio",
-           [{"expr": f'sum({sel(TOK, FULL, CR)}) / (sum({sel(TOK, FULL, CRCI)}) > 0)'}],
+           [{"expr": f'sum(max_over_time({sel(TOK, FULL, CR)}[$__range])) / (sum(max_over_time({sel(TOK, FULL, CRCI)}[$__range])) > 0)'}],
            w=6, unit="percentunit", decimals=1, color="background",
            thresholds={"mode": "absolute", "steps": [{"color": "red", "value": None},
                        {"color": "yellow", "value": 0.3}, {"color": "green", "value": 0.6}]},
            desc="cacheRead / (cacheRead + cacheCreation + input). Higher = more context reuse.")
     b.stat("Input tokens: cached vs fresh",
-           [{"expr": f'sum({sel(TOK, FULL, CR)}) or vector(0)', "legend": "cached (read)"},
-            {"expr": f'sum({sel(TOK, FULL, FRESH)}) or vector(0)', "legend": "fresh"}],
+           [{"expr": f'sum(max_over_time({sel(TOK, FULL, CR)}[$__range])) or vector(0)', "legend": "cached (read)"},
+            {"expr": f'sum(max_over_time({sel(TOK, FULL, FRESH)}[$__range])) or vector(0)', "legend": "fresh"}],
            w=6, unit="short", decimals=1, text="value_and_name", graph="none",
            desc="Input-side split (output excluded): cacheRead vs input+cacheCreation.")
     b.stat("Cost per 1M tokens",
-           [{"expr": f"sum({sel(COST, FULL)}) / (sum({sel(TOK, FULL)}) / 1e6 > 0)"}],
+           [{"expr": f"sum(max_over_time({sel(COST, FULL)}[$__range])) / (sum(max_over_time({sel(TOK, FULL)}[$__range])) / 1e6 > 0)"}],
            w=6, unit="currencyUSD", decimals=2, graph="none",
            desc="Blended efficiency: total cost ÷ total tokens. Heavier cache reuse drives this down.")
     b.timeseries("Token burn rate (/min, by type)",
@@ -389,36 +391,36 @@ def build_overview():
             [{"expr": f"sum(increase({sel(TOK, FULL)}[7d]))"}], w=6, maxvar="$tokens_limit_weekly",
             desc="Rolling 7d token usage. Set the weekly token limit variable to match your plan.")
     b.stat("Active time per session (avg)",
-           [{"expr": f'sum({sel(ACT, BASE)}) / (count(count by ("session.id") ({sel(ACT, BASE)})) > 0)'}],
+           [{"expr": f'sum(max_over_time({sel(ACT, BASE)}[$__range])) / (count(count by ("session.id") (max_over_time({sel(ACT, BASE)}[$__range]))) > 0)'}],
            w=6, unit="s", desc="Per distinct in-window session (not cumulative session starts).")
     b.pie("Active time by type",
-          [{"expr": f"sum by (type) ({sel(ACT, BASE)})", "legend": "{{type}}"}], w=6, unit="s",
+          [{"expr": f"sum by (type) (max_over_time({sel(ACT, BASE)}[$__range]))", "legend": "{{type}}"}], w=6, unit="s",
           desc="user = keyboard interaction, cli = tool/AI processing.")
 
     b.row("Sessions & productivity")
     b.pie("Sessions by start type",
-          [{"expr": f"sum by (start_type) ({sel(SESS, BASE)})", "legend": "{{start_type}}"}], w=6,
+          [{"expr": f"sum by (start_type) (max_over_time({sel(SESS, BASE)}[$__range]))", "legend": "{{start_type}}"}], w=6,
           desc="fresh / resume / continue / agents_view (UI launch).")
     b.timeseries("New sessions over time",
-                 [{"expr": f"sum by (start_type) (increase({sel(SESS, BASE)}[$__rate_interval]))", "legend": "{{start_type}}"}],
+                 [{"expr": f"sum by (start_type) (increase({sel(SESS, BASE)}[$__interval]))", "legend": "{{start_type}}"}],
                  w=10, draw="bars", fill=80, stack=True, decimals=0, legend_calcs=["sum"])
     b.timeseries("Lines of code (added/removed)",
-                 [{"expr": f"sum by (type) (increase({sel(LOC, BASE)}[$__rate_interval]))", "legend": "{{type}}"}],
+                 [{"expr": f"sum by (type) (increase({sel(LOC, BASE)}[$__interval]))", "legend": "{{type}}"}],
                  w=8, draw="bars", fill=80, decimals=0, legend_calcs=["sum"], place="right",
                  overrides=[{"matcher": {"id": "byName", "options": "removed"},
                              "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]},
                             {"matcher": {"id": "byName", "options": "added"},
                              "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]}])
     b.pie("Edit decisions (accept/reject)",
-          [{"expr": f"sum by (decision) ({sel(EDIT, BASE)})", "legend": "{{decision}}"}], w=6)
+          [{"expr": f"sum by (decision) (max_over_time({sel(EDIT, BASE)}[$__range]))", "legend": "{{decision}}"}], w=6)
     b.bargauge("Edit calls by language",
-               [{"expr": f"topk(12, sum by (language) ({sel(EDIT, BASE)}))", "legend": "{{language}}"}],
+               [{"expr": f"topk(12, sum by (language) (max_over_time({sel(EDIT, BASE)}[$__range])))", "legend": "{{language}}"}],
                w=6, mode="lcd")
     b.bargauge("Cost by skill",
-               [{"expr": f'topk(12, sum by ("skill.name") ({sel(COST, FULL)}))', "legend": "{{skill.name}}"}],
+               [{"expr": f'topk(12, sum by ("skill.name") (max_over_time({sel(COST, FULL)}[$__range])))', "legend": "{{skill.name}}"}],
                w=6, unit="currencyUSD", desc="Spend attributed to the active skill / slash command.")
     b.bargauge("Cost by subagent",
-               [{"expr": f'topk(12, sum by ("agent.name") ({sel(COST, FULL)}))', "legend": "{{agent.name}}"}],
+               [{"expr": f'topk(12, sum by ("agent.name") (max_over_time({sel(COST, FULL)}[$__range])))', "legend": "{{agent.name}}"}],
                w=6, unit="currencyUSD", desc="Spend attributed to named subagent types (Explore, Plan, custom, …).")
 
     b.row("Reliability & events (Loki)")
@@ -507,44 +509,44 @@ def build_automated():
     b.row("Headline (automated)")
     GREEN = {"mode": "absolute", "steps": [{"color": "green", "value": None},
              {"color": "yellow", "value": 25}, {"color": "red", "value": 100}]}
-    b.stat("Cost", [{"expr": f"sum({sel(COST, A_FULL)})", "legend": "USD"}],
+    b.stat("Cost", [{"expr": f"sum(max_over_time({sel(COST, A_FULL)}[$__range]))", "legend": "USD"}],
            unit="currencyUSD", decimals=2, color="bgsolid", thresholds=GREEN)
-    b.stat("Tokens", [{"expr": f"sum({sel(TOK, A_FULL)})"}], unit="short", decimals=1)
-    b.stat("Agent sessions", [{"expr": f"sum({sel(SESS, A_BASE)})"}])
-    b.stat("Distinct roles", [{"expr": f'count(count by ("run.role") ({sel(COST, A_FULL)})) or vector(0)'}])
+    b.stat("Tokens", [{"expr": f"sum(max_over_time({sel(TOK, A_FULL)}[$__range]))"}], unit="short", decimals=1)
+    b.stat("Agent sessions", [{"expr": f"sum(max_over_time({sel(SESS, A_BASE)}[$__range]))"}])
+    b.stat("Distinct roles", [{"expr": f'count(count by ("run.role") (max_over_time({sel(COST, A_FULL)}[$__range]))) or vector(0)'}])
     b.stat("Avg cost / session",
-           [{"expr": f'sum({sel(COST, A_FULL)}) / (count(count by ("session.id") ({sel(COST, A_FULL)})) > 0)'}],
+           [{"expr": f'sum(max_over_time({sel(COST, A_FULL)}[$__range])) / (count(count by ("session.id") (max_over_time({sel(COST, A_FULL)}[$__range]))) > 0)'}],
            unit="currencyUSD", decimals=3, desc="Per distinct in-window session.")
-    b.stat("Active time", [{"expr": f"sum({sel(ACT, A_BASE)})"}], unit="s")
+    b.stat("Active time", [{"expr": f"sum(max_over_time({sel(ACT, A_BASE)}[$__range]))"}], unit="s")
 
     b.row("By role / task / user")
-    b.pie("Cost by role", [{"expr": f'sum by ("run.role") ({sel(COST, A_FULL)})', "legend": "{{run.role}}"}],
+    b.pie("Cost by role", [{"expr": f'sum by ("run.role") (max_over_time({sel(COST, A_FULL)}[$__range]))', "legend": "{{run.role}}"}],
           w=8, unit="currencyUSD")
-    b.pie("Tokens by role", [{"expr": f'sum by ("run.role") ({sel(TOK, A_FULL)})', "legend": "{{run.role}}"}], w=8)
+    b.pie("Tokens by role", [{"expr": f'sum by ("run.role") (max_over_time({sel(TOK, A_FULL)}[$__range]))', "legend": "{{run.role}}"}], w=8)
     b.timeseries("Cost over time by role",
-                 [{"expr": f'sum by ("run.role") (rate({sel(COST, A_FULL)}[$__rate_interval]) * $__rate_interval)', "legend": "{{run.role}}"}],
-                 w=8, unit="currencyUSD", draw="bars", fill=80, stack=True, decimals=4, legend_calcs=["sum"], place="right")
-    b.bargauge("Cost by task", [{"expr": f'topk(15, sum by ("run.task") ({sel(COST, A_FULL)}))', "legend": "{{run.task}}"}],
+                 [{"expr": f'sum by ("run.role") (increase({sel(COST, A_FULL)}[$__interval]))', "legend": "{{run.role}}"}],
+                 w=8, unit="currencyUSD", draw="bars", fill=80, stack=True, decimals=4, legend_calcs=["mean", "max"], place="right")
+    b.bargauge("Cost by task", [{"expr": f'topk(15, sum by ("run.task") (max_over_time({sel(COST, A_FULL)}[$__range])))', "legend": "{{run.task}}"}],
                w=12, unit="currencyUSD")
-    b.bargauge("Cost by user", [{"expr": f'topk(15, sum by ("run.user") ({sel(COST, A_FULL)}))', "legend": "{{run.user}}"}],
+    b.bargauge("Cost by user", [{"expr": f'topk(15, sum by ("run.user") (max_over_time({sel(COST, A_FULL)}[$__range])))', "legend": "{{run.user}}"}],
                w=12, unit="currencyUSD")
 
     b.row("Sessions & efficiency")
     b.table("Top automated sessions",
-            [{"expr": f'topk(25, sum by ("session.id", "run.role", "run.task", "run.user") ({sel(COST, A_FULL_NS)}))',
+            [{"expr": f'topk(25, sum by ("session.id", "run.role", "run.task", "run.user") (max_over_time({sel(COST, A_FULL_NS)}[$__range])))',
               "instant": True, "refId": "A"},
-             {"expr": f'sum by ("session.id", "run.role", "run.task", "run.user") ({sel(TOK, A_FULL_NS)}) and on ("session.id") topk(25, sum by ("session.id") ({sel(COST, A_FULL_NS)}))',
+             {"expr": f'sum by ("session.id", "run.role", "run.task", "run.user") (max_over_time({sel(TOK, A_FULL_NS)}[$__range])) and on ("session.id") topk(25, sum by ("session.id") (max_over_time({sel(COST, A_FULL_NS)}[$__range])))',
               "instant": True, "refId": "B"}],
             w=16, h=9,
             rename={"session.id": "Session", "run.role": "Role", "run.task": "Task",
                     "run.user": "User", "Value #A": "Cost ($)", "Value #B": "Tokens"},
             units={"Cost ($)": "currencyUSD", "Tokens": "short"})
     b.stat("Cache hit ratio",
-           [{"expr": f'sum({sel(TOK, A_FULL, CR)}) / (sum({sel(TOK, A_FULL, CRCI)}) > 0)'}],
+           [{"expr": f'sum(max_over_time({sel(TOK, A_FULL, CR)}[$__range])) / (sum(max_over_time({sel(TOK, A_FULL, CRCI)}[$__range])) > 0)'}],
            w=4, h=9, unit="percentunit", decimals=1, color="background",
            thresholds={"mode": "absolute", "steps": [{"color": "red", "value": None},
                        {"color": "yellow", "value": 0.3}, {"color": "green", "value": 0.6}]})
-    b.pie("Cost by model", [{"expr": f"sum by (model) ({sel(COST, A_FULL)})", "legend": "{{model}}"}], w=4, h=9, unit="currencyUSD")
+    b.pie("Cost by model", [{"expr": f"sum by (model) (max_over_time({sel(COST, A_FULL)}[$__range]))", "legend": "{{model}}"}], w=4, h=9, unit="currencyUSD")
 
     b.row("Reliability (Loki)")
     def lc(ev, extra=""):
@@ -611,49 +613,49 @@ def build_workflows():
     b.row("Headline (workflows)")
     GREEN = {"mode": "absolute", "steps": [{"color": "green", "value": None},
              {"color": "yellow", "value": 25}, {"color": "red", "value": 100}]}
-    b.stat("Workflow cost", [{"expr": f"sum({sel(COST, W_FULL)})", "legend": "USD"}],
+    b.stat("Workflow cost", [{"expr": f"sum(max_over_time({sel(COST, W_FULL)}[$__range]))", "legend": "USD"}],
            unit="currencyUSD", decimals=2, color="bgsolid", thresholds=GREEN)
-    b.stat("Tokens", [{"expr": f"sum({sel(TOK, W_FULL)})"}], unit="short", decimals=1)
-    b.stat("Workflows", [{"expr": f'count(count by ("wf.id") ({sel(COST, W_FULL)})) or vector(0)'}],
+    b.stat("Tokens", [{"expr": f"sum(max_over_time({sel(TOK, W_FULL)}[$__range]))"}], unit="short", decimals=1)
+    b.stat("Workflows", [{"expr": f'count(count by ("wf.id") (max_over_time({sel(COST, W_FULL)}[$__range]))) or vector(0)'}],
            desc="Distinct wf.id values in range.")
     b.stat("Avg cost / workflow",
-           [{"expr": f'sum({sel(COST, W_FULL)}) / (count(count by ("wf.id") ({sel(COST, W_FULL)})) > 0)'}],
+           [{"expr": f'sum(max_over_time({sel(COST, W_FULL)}[$__range])) / (count(count by ("wf.id") (max_over_time({sel(COST, W_FULL)}[$__range]))) > 0)'}],
            unit="currencyUSD", decimals=3)
-    b.stat("Sessions", [{"expr": f"sum({sel(SESS, W_BASE)})"}])
-    b.stat("Active time", [{"expr": f"sum({sel(ACT, W_BASE)})"}], unit="s")
+    b.stat("Sessions", [{"expr": f"sum(max_over_time({sel(SESS, W_BASE)}[$__range]))"}])
+    b.stat("Active time", [{"expr": f"sum(max_over_time({sel(ACT, W_BASE)}[$__range]))"}], unit="s")
 
     b.row("By workflow")
-    b.bargauge("Cost by workflow", [{"expr": f'topk(20, sum by ("wf.id") ({sel(COST, W_FULL)}))', "legend": "{{wf.id}}"}],
+    b.bargauge("Cost by workflow", [{"expr": f'topk(20, sum by ("wf.id") (max_over_time({sel(COST, W_FULL)}[$__range])))', "legend": "{{wf.id}}"}],
                w=12, unit="currencyUSD")
-    b.bargauge("Tokens by workflow", [{"expr": f'topk(20, sum by ("wf.id") ({sel(TOK, W_FULL)}))', "legend": "{{wf.id}}"}],
+    b.bargauge("Tokens by workflow", [{"expr": f'topk(20, sum by ("wf.id") (max_over_time({sel(TOK, W_FULL)}[$__range])))', "legend": "{{wf.id}}"}],
                w=12, unit="short")
     b.timeseries("Cost over time by workflow",
-                 [{"expr": f'topk(15, sum by ("wf.id") (rate({sel(COST, W_FULL)}[$__rate_interval]) * $__rate_interval))', "legend": "{{wf.id}}"}],
-                 w=24, unit="currencyUSD", draw="bars", fill=80, stack=True, decimals=4, legend_calcs=["sum"], place="right",
+                 [{"expr": f'topk(15, sum by ("wf.id") (increase({sel(COST, W_FULL)}[$__interval])))', "legend": "{{wf.id}}"}],
+                 w=24, unit="currencyUSD", draw="bars", fill=80, stack=True, decimals=4, legend_calcs=["mean", "max"], place="right",
                  desc="Top 15 workflows by cost in each interval.")
     b.table("Per-workflow breakdown",
-            [{"expr": f'topk(20, sum by ("wf.id", "run.user") ({sel(COST, W_FULL_NS)}))', "instant": True, "refId": "A"},
-             {"expr": f'sum by ("wf.id", "run.user") ({sel(TOK, W_FULL_NS)}) and on ("wf.id") topk(20, sum by ("wf.id") ({sel(COST, W_FULL_NS)}))',
+            [{"expr": f'topk(20, sum by ("wf.id", "run.user") (max_over_time({sel(COST, W_FULL_NS)}[$__range])))', "instant": True, "refId": "A"},
+             {"expr": f'sum by ("wf.id", "run.user") (max_over_time({sel(TOK, W_FULL_NS)}[$__range])) and on ("wf.id") topk(20, sum by ("wf.id") (max_over_time({sel(COST, W_FULL_NS)}[$__range])))',
               "instant": True, "refId": "B"}],
             w=24, h=9,
             rename={"wf.id": "Workflow", "run.user": "User", "Value #A": "Cost ($)", "Value #B": "Tokens"},
             units={"Cost ($)": "currencyUSD", "Tokens": "short"})
 
     b.row("By step")
-    b.pie("Cost by step", [{"expr": f'sum by ("wf.step") ({sel(COST, W_FULL)})', "legend": "{{wf.step}}"}],
+    b.pie("Cost by step", [{"expr": f'sum by ("wf.step") (max_over_time({sel(COST, W_FULL)}[$__range]))', "legend": "{{wf.step}}"}],
           w=8, unit="currencyUSD")
-    b.pie("Tokens by step", [{"expr": f'sum by ("wf.step") ({sel(TOK, W_FULL)})', "legend": "{{wf.step}}"}], w=8)
+    b.pie("Tokens by step", [{"expr": f'sum by ("wf.step") (max_over_time({sel(TOK, W_FULL)}[$__range]))', "legend": "{{wf.step}}"}], w=8)
     b.timeseries("Step cost over time",
-                 [{"expr": f'sum by ("wf.step") (rate({sel(COST, W_FULL)}[$__rate_interval]) * $__rate_interval)', "legend": "{{wf.step}}"}],
-                 w=8, unit="currencyUSD", draw="bars", fill=80, stack=True, decimals=4, legend_calcs=["sum"], place="right")
+                 [{"expr": f'sum by ("wf.step") (increase({sel(COST, W_FULL)}[$__interval]))', "legend": "{{wf.step}}"}],
+                 w=8, unit="currencyUSD", draw="bars", fill=80, stack=True, decimals=4, legend_calcs=["mean", "max"], place="right")
 
     b.row("Efficiency & reliability")
     b.stat("Cache hit ratio",
-           [{"expr": f'sum({sel(TOK, W_FULL, CR)}) / (sum({sel(TOK, W_FULL, CRCI)}) > 0)'}],
+           [{"expr": f'sum(max_over_time({sel(TOK, W_FULL, CR)}[$__range])) / (sum(max_over_time({sel(TOK, W_FULL, CRCI)}[$__range])) > 0)'}],
            w=6, unit="percentunit", decimals=1, color="background",
            thresholds={"mode": "absolute", "steps": [{"color": "red", "value": None},
                        {"color": "yellow", "value": 0.3}, {"color": "green", "value": 0.6}]})
-    b.pie("Cost by model", [{"expr": f"sum by (model) ({sel(COST, W_FULL)})", "legend": "{{model}}"}], w=6, unit="currencyUSD")
+    b.pie("Cost by model", [{"expr": f"sum by (model) (max_over_time({sel(COST, W_FULL)}[$__range]))", "legend": "{{model}}"}], w=6, unit="currencyUSD")
     b.stat("API errors", [{"expr": f'sum(count_over_time({L} | event_name="api_error" [$__range])) or vector(0)', "loki": True}],
            w=6, color="background",
            thresholds={"mode": "absolute", "steps": [{"color": "green", "value": None}, {"color": "red", "value": 1}]})

@@ -108,6 +108,33 @@ plus mode-specific role/task/wf/step). Panels that read empty show a hint (e.g.
 "no team.id yet — set team.id=… in OTEL_RESOURCE_ATTRIBUTES"); they light up
 automatically once the attribute flows.
 
+## How totals are aggregated (important)
+
+`claude_code.*` are **cumulative counters scoped per session** — each session.id is
+its own monotonic series that stops reporting (goes stale) when the session ends. That
+breaks the two obvious aggregations:
+
+- A plain instant `sum(metric)` only sees series with a sample in the last ~5 min, so it
+  collapses to the cost of *currently-live* sessions (near-zero when nothing is running).
+  This is why an early version showed a $1.39 headline against $20 of real spend.
+- `rate(metric[$__rate_interval]) * $__rate_interval` summed across a chart **over**-counts,
+  because Grafana's rate windows overlap (`$__rate_interval` ≈ 4× the step).
+
+So the generator uses:
+
+- **Totals** (headline stats, pies, bargauges, tables, ratios, distinct counts) →
+  `sum(max_over_time(metric[$__range]))`: each series' final cumulative value over the
+  whole range, stale or not. This is the true spend in the window, and headline = pie =
+  table all agree.
+- **Trends** ("… over time" charts) → `sum by (…) (increase(metric[$__interval]))`:
+  non-overlapping per-interval deltas. These show *shape*; their legend deliberately drops
+  the "Total" calc (it would read ~20–30% under the headline — `increase()` can't capture a
+  session's first cumulative sample under delta-origin temporality). The authoritative
+  totals live in the headline / pies / tables, not the trend legend.
+
+When adding a panel: counters get `max_over_time(…[$__range])` for a total or
+`increase(…[$__interval])` for a trend — never a bare instant `sum()`.
+
 ## Before fleet-wide rollout (known follow-ups)
 
 These are fine on the dev cluster but worth doing before this fans out widely:

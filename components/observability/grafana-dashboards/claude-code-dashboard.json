@@ -75,7 +75,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"})",
+          "expr": "sum(max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range]))",
           "legendFormat": "USD"
         }
       ],
@@ -139,7 +139,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"})"
+          "expr": "sum(max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range]))"
         }
       ],
       "fieldConfig": {
@@ -182,7 +182,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum({__name__=\"claude_code.session.count_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"})"
+          "expr": "sum(max_over_time({__name__=\"claude_code.session.count_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range]))"
         }
       ],
       "fieldConfig": {
@@ -225,7 +225,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum({__name__=\"claude_code.active_time.total_seconds_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"})"
+          "expr": "sum(max_over_time({__name__=\"claude_code.active_time.total_seconds_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range]))"
         }
       ],
       "fieldConfig": {
@@ -268,7 +268,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (type) ({__name__=\"claude_code.lines_of_code.count_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"})",
+          "expr": "sum by (type) (max_over_time({__name__=\"claude_code.lines_of_code.count_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range]))",
           "legendFormat": "{{type}}"
         }
       ],
@@ -312,7 +312,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum({__name__=\"claude_code.commit.count_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}) or vector(0)",
+          "expr": "sum(max_over_time({__name__=\"claude_code.commit.count_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range])) or vector(0)",
           "legendFormat": "Commits"
         },
         {
@@ -321,7 +321,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum({__name__=\"claude_code.pull_request.count_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}) or vector(0)",
+          "expr": "sum(max_over_time({__name__=\"claude_code.pull_request.count_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range])) or vector(0)",
           "legendFormat": "PRs"
         }
       ],
@@ -378,7 +378,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (model) ({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"})",
+          "expr": "sum by (model) (max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range]))",
           "legendFormat": "{{model}}"
         }
       ],
@@ -429,7 +429,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (\"run.mode\") ({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"})",
+          "expr": "sum by (\"run.mode\") (max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range]))",
           "legendFormat": "{{run.mode}}"
         }
       ],
@@ -481,7 +481,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (query_source) ({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"})",
+          "expr": "sum by (query_source) (max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range]))",
           "legendFormat": "{{query_source}}"
         }
       ],
@@ -533,7 +533,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (model) (rate({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__rate_interval]) * $__rate_interval)",
+          "expr": "sum by (model) (increase({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__interval]))",
           "legendFormat": "{{model}}"
         }
       ],
@@ -555,7 +555,8 @@
       "options": {
         "legend": {
           "calcs": [
-            "sum"
+            "mean",
+            "max"
           ],
           "displayMode": "table",
           "placement": "bottom"
@@ -564,7 +565,8 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "description": "Per-interval spend (trend). Authoritative totals are in the headline / pies / tables."
     },
     {
       "id": 13,
@@ -587,7 +589,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (effort) ({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"})",
+          "expr": "sum by (effort) (max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range]))",
           "legendFormat": "{{effort}}"
         }
       ],
@@ -630,7 +632,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "topk(15, sum by (\"user.email\") ({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}))",
+          "expr": "topk(15, sum by (\"user.email\") (max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range])))",
           "instant": true,
           "format": "table",
           "range": false
@@ -641,7 +643,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (\"user.email\") ({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}) and on (\"user.email\") topk(15, sum by (\"user.email\") ({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}))",
+          "expr": "sum by (\"user.email\") (max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range])) and on (\"user.email\") topk(15, sum by (\"user.email\") (max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range])))",
           "instant": true,
           "format": "table",
           "range": false
@@ -739,7 +741,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (\"team.id\") ({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"})",
+          "expr": "sum by (\"team.id\") (max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range]))",
           "instant": true,
           "format": "table",
           "range": false
@@ -750,7 +752,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (\"team.id\") ({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"})",
+          "expr": "sum by (\"team.id\") (max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range]))",
           "instant": true,
           "format": "table",
           "range": false
@@ -848,7 +850,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "topk(25, sum by (\"session.id\", \"run.mode\", \"user.email\") ({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\"}))",
+          "expr": "topk(25, sum by (\"session.id\", \"run.mode\", \"user.email\") (max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\"}[$__range])))",
           "instant": true,
           "format": "table",
           "range": false
@@ -859,7 +861,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (\"session.id\", \"run.mode\", \"user.email\") ({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\"}) and on (\"session.id\") topk(25, sum by (\"session.id\") ({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\"}))",
+          "expr": "sum by (\"session.id\", \"run.mode\", \"user.email\") (max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\"}[$__range])) and on (\"session.id\") topk(25, sum by (\"session.id\") (max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\"}[$__range])))",
           "instant": true,
           "format": "table",
           "range": false
@@ -972,7 +974,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (type) (rate({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__rate_interval]) * $__rate_interval)",
+          "expr": "sum by (type) (increase({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__interval]))",
           "legendFormat": "{{type}}"
         }
       ],
@@ -993,7 +995,6 @@
       "options": {
         "legend": {
           "calcs": [
-            "sum",
             "mean",
             "max"
           ],
@@ -1004,7 +1005,8 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "description": "Per-interval token volume (trend). Authoritative totals are in the headline / pies / tables."
     },
     {
       "id": 19,
@@ -1027,7 +1029,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (model) ({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"})",
+          "expr": "sum by (model) (max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range]))",
           "legendFormat": "{{model}}"
         }
       ],
@@ -1078,7 +1080,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\", type=\"cacheRead\"}) / (sum({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\", type=~\"cacheRead|cacheCreation|input\"}) > 0)"
+          "expr": "sum(max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\", type=\"cacheRead\"}[$__range])) / (sum(max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\", type=~\"cacheRead|cacheCreation|input\"}[$__range])) > 0)"
         }
       ],
       "fieldConfig": {
@@ -1142,7 +1144,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\", type=\"cacheRead\"}) or vector(0)",
+          "expr": "sum(max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\", type=\"cacheRead\"}[$__range])) or vector(0)",
           "legendFormat": "cached (read)"
         },
         {
@@ -1151,7 +1153,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\", type=~\"input|cacheCreation\"}) or vector(0)",
+          "expr": "sum(max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\", type=~\"input|cacheCreation\"}[$__range])) or vector(0)",
           "legendFormat": "fresh"
         }
       ],
@@ -1196,7 +1198,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}) / (sum({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}) / 1e6 > 0)"
+          "expr": "sum(max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range])) / (sum(max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range])) / 1e6 > 0)"
         }
       ],
       "fieldConfig": {
@@ -1462,7 +1464,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum({__name__=\"claude_code.active_time.total_seconds_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}) / (count(count by (\"session.id\") ({__name__=\"claude_code.active_time.total_seconds_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"})) > 0)"
+          "expr": "sum(max_over_time({__name__=\"claude_code.active_time.total_seconds_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range])) / (count(count by (\"session.id\") (max_over_time({__name__=\"claude_code.active_time.total_seconds_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range]))) > 0)"
         }
       ],
       "fieldConfig": {
@@ -1506,7 +1508,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (type) ({__name__=\"claude_code.active_time.total_seconds_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"})",
+          "expr": "sum by (type) (max_over_time({__name__=\"claude_code.active_time.total_seconds_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range]))",
           "legendFormat": "{{type}}"
         }
       ],
@@ -1571,7 +1573,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (start_type) ({__name__=\"claude_code.session.count_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"})",
+          "expr": "sum by (start_type) (max_over_time({__name__=\"claude_code.session.count_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range]))",
           "legendFormat": "{{start_type}}"
         }
       ],
@@ -1623,7 +1625,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (start_type) (increase({__name__=\"claude_code.session.count_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__rate_interval]))",
+          "expr": "sum by (start_type) (increase({__name__=\"claude_code.session.count_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__interval]))",
           "legendFormat": "{{start_type}}"
         }
       ],
@@ -1677,7 +1679,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (type) (increase({__name__=\"claude_code.lines_of_code.count_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__rate_interval]))",
+          "expr": "sum by (type) (increase({__name__=\"claude_code.lines_of_code.count_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__interval]))",
           "legendFormat": "{{type}}"
         }
       ],
@@ -1759,7 +1761,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (decision) ({__name__=\"claude_code.code_edit_tool.decision_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"})",
+          "expr": "sum by (decision) (max_over_time({__name__=\"claude_code.code_edit_tool.decision_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range]))",
           "legendFormat": "{{decision}}"
         }
       ],
@@ -1810,7 +1812,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "topk(12, sum by (language) ({__name__=\"claude_code.code_edit_tool.decision_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}))",
+          "expr": "topk(12, sum by (language) (max_over_time({__name__=\"claude_code.code_edit_tool.decision_total\", \"user.email\"=~\"$user\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range])))",
           "legendFormat": "{{language}}"
         }
       ],
@@ -1852,7 +1854,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "topk(12, sum by (\"skill.name\") ({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}))",
+          "expr": "topk(12, sum by (\"skill.name\") (max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range])))",
           "legendFormat": "{{skill.name}}"
         }
       ],
@@ -1895,7 +1897,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "topk(12, sum by (\"agent.name\") ({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}))",
+          "expr": "topk(12, sum by (\"agent.name\") (max_over_time({__name__=\"claude_code.cost.usage_USD_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range])))",
           "legendFormat": "{{agent.name}}"
         }
       ],
