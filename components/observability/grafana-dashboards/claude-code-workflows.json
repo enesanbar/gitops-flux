@@ -1114,7 +1114,8 @@
         "refresh": 2,
         "sort": 1,
         "hide": 0,
-        "regex": ""
+        "regex": "",
+        "allValue": ".*"
       },
       {
         "name": "wuser",
@@ -1139,7 +1140,8 @@
         "refresh": 2,
         "sort": 1,
         "hide": 0,
-        "regex": ""
+        "regex": "",
+        "allValue": ".*"
       },
       {
         "name": "model",
@@ -1164,7 +1166,8 @@
         "refresh": 2,
         "sort": 1,
         "hide": 0,
-        "regex": ""
+        "regex": "",
+        "allValue": ".*"
       },
       {
         "name": "effort",
@@ -1189,7 +1192,8 @@
         "refresh": 2,
         "sort": 1,
         "hide": 0,
-        "regex": ""
+        "regex": "",
+        "allValue": ".*"
       },
       {
         "name": "team",
@@ -1214,7 +1218,8 @@
         "refresh": 2,
         "sort": 1,
         "hide": 0,
-        "regex": ""
+        "regex": "",
+        "allValue": ".*"
       },
       {
         "name": "env",
@@ -1239,7 +1244,8 @@
         "refresh": 2,
         "sort": 1,
         "hide": 0,
-        "regex": ""
+        "regex": "",
+        "allValue": ".*"
       },
       {
         "name": "session",

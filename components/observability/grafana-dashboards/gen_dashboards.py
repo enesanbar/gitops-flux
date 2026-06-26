@@ -244,7 +244,12 @@ def var_ds(name="datasource", q="prometheus", label=None):
             "hide": 0, "refresh": 1, "regex": "", "label": label}
 
 
-def var_query(name, label, metric, target_label, allvalue=None, hide=0, regex="", desc=None):
+def var_query(name, label, metric, target_label, allvalue=".*", hide=0, regex="", desc=None):
+    # allValue=".*" (not the default enumerated regex) so "All" matches series where the label
+    # is ABSENT too. Our custom attrs (run.mode/run.env/team.id) and optional built-ins (effort)
+    # are missing on much of the data; with Grafana's default "All", `label=~"(v1|v2)"` excludes
+    # absent-label series, ANDing several such filters drops nearly everything. wf overrides to
+    # ".+" on purpose (the Workflows dashboard wants only series that actually have a wf.id).
     q = f'label_values({{__name__="{metric}"}}, {target_label})'
     v = {"name": name, "label": label, "type": "query", "datasource": PROM,
          "definition": q, "query": {"query": q, "refId": "var"},

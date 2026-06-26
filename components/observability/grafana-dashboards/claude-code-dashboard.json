@@ -2553,6 +2553,7 @@
         "sort": 1,
         "hide": 0,
         "regex": "",
+        "allValue": ".*",
         "description": "interactive/automated/workflow. Requires run.mode in OTEL_RESOURCE_ATTRIBUTES on every client \u2014 including interactive machines (run.mode=interactive). Until set, data is untagged and 'interactive' selects nothing."
       },
       {
@@ -2578,7 +2579,8 @@
         "refresh": 2,
         "sort": 1,
         "hide": 0,
-        "regex": ""
+        "regex": "",
+        "allValue": ".*"
       },
       {
         "name": "model",
@@ -2603,7 +2605,8 @@
         "refresh": 2,
         "sort": 1,
         "hide": 0,
-        "regex": ""
+        "regex": "",
+        "allValue": ".*"
       },
       {
         "name": "effort",
@@ -2628,7 +2631,8 @@
         "refresh": 2,
         "sort": 1,
         "hide": 0,
-        "regex": ""
+        "regex": "",
+        "allValue": ".*"
       },
       {
         "name": "query_source",
@@ -2653,7 +2657,8 @@
         "refresh": 2,
         "sort": 1,
         "hide": 0,
-        "regex": ""
+        "regex": "",
+        "allValue": ".*"
       },
       {
         "name": "env",
@@ -2678,7 +2683,8 @@
         "refresh": 2,
         "sort": 1,
         "hide": 0,
-        "regex": ""
+        "regex": "",
+        "allValue": ".*"
       },
       {
         "name": "team",
@@ -2703,7 +2709,8 @@
         "refresh": 2,
         "sort": 1,
         "hide": 0,
-        "regex": ""
+        "regex": "",
+        "allValue": ".*"
       },
       {
         "name": "session",
