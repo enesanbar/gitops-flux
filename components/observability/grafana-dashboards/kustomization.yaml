@@ -11,6 +11,8 @@ configMapGenerator:
   - name: grafana-dashboard-claude-code
     files:
       - claude-code-dashboard.json
+      - claude-code-automated.json
+      - claude-code-workflows.json
 
 generatorOptions:
   # Without this, configMapGenerator appends a content hash to the
