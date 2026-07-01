@@ -38,6 +38,8 @@ EDIT   = "claude_code.code_edit_tool.decision_total"
 CR    = 'type="cacheRead"'
 CRCI  = 'type=~"cacheRead|cacheCreation|input"'
 FRESH = 'type=~"input|cacheCreation"'  # input-side only; mirrors the cache-ratio denominator (excludes output)
+# Single-type matchers (module constants: f-strings can't contain backslashes/quotes cleanly).
+T_IN, T_OUT, T_CR, T_CC = 'type="input"', 'type="output"', 'type="cacheRead"', 'type="cacheCreation"'
 
 PROM = {"type": "prometheus", "uid": "${datasource}"}
 LOKI = {"type": "loki", "uid": "${loki}"}
@@ -387,6 +389,22 @@ def build_overview():
     b.timeseries("Token burn rate (/min, by type)",
                  [{"expr": f"sum by (type) (rate({sel(TOK, FULL)}[5m])) * 60", "legend": "{{type}}"}],
                  w=18, stack=True, fill=30, place="right")
+    # Per-model split by token type — mirrors `claude usage`'s
+    # "input / output / cache read / cache write" line, one row per model.
+    # Four type-scoped queries + a total, merged on `model`.
+    b.table("Tokens by model & type",
+            [{"expr": f"sum by (model) (max_over_time({sel(TOK, FULL, T_IN)}[$__range]))", "instant": True, "refId": "A"},
+             {"expr": f"sum by (model) (max_over_time({sel(TOK, FULL, T_OUT)}[$__range]))", "instant": True, "refId": "B"},
+             {"expr": f"sum by (model) (max_over_time({sel(TOK, FULL, T_CR)}[$__range]))", "instant": True, "refId": "C"},
+             {"expr": f"sum by (model) (max_over_time({sel(TOK, FULL, T_CC)}[$__range]))", "instant": True, "refId": "D"},
+             {"expr": f"sum by (model) (max_over_time({sel(TOK, FULL)}[$__range]))", "instant": True, "refId": "E"}],
+            w=24, h=8,
+            rename={"model": "Model", "Value #A": "Input", "Value #B": "Output",
+                    "Value #C": "Cache read", "Value #D": "Cache write", "Value #E": "Total"},
+            units={"Total": "short", "Input": "short", "Output": "short",
+                   "Cache read": "short", "Cache write": "short"},
+            desc="Per-model token split by type (input / output / cacheRead / cacheCreation) plus total — "
+                 "the same breakdown `claude usage` prints per model.")
 
     b.row("Usage limits (rolling windows)")
     b.gauge("Tokens used in last 5h",

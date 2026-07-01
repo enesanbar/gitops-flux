@@ -1277,20 +1277,194 @@
       }
     },
     {
-      "type": "row",
       "id": 24,
+      "type": "table",
+      "title": "Tokens by model & type",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 61
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (model) (max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\", type=\"input\"}[$__range]))",
+          "instant": true,
+          "format": "table",
+          "range": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (model) (max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\", type=\"output\"}[$__range]))",
+          "instant": true,
+          "format": "table",
+          "range": false
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (model) (max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\", type=\"cacheRead\"}[$__range]))",
+          "instant": true,
+          "format": "table",
+          "range": false
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (model) (max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\", type=\"cacheCreation\"}[$__range]))",
+          "instant": true,
+          "format": "table",
+          "range": false
+        },
+        {
+          "refId": "E",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (model) (max_over_time({__name__=\"claude_code.token.usage_tokens_total\", \"user.email\"=~\"$user\", model=~\"$model\", effort=~\"$effort\", query_source=~\"$query_source\", \"run.mode\"=~\"$mode\", \"run.env\"=~\"$env\", \"team.id\"=~\"$team\", \"session.id\"=~\"$session\"}[$__range]))",
+          "instant": true,
+          "format": "table",
+          "range": false
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "model": "Model",
+              "Value #A": "Input",
+              "Value #B": "Output",
+              "Value #C": "Cache read",
+              "Value #D": "Cache write",
+              "Value #E": "Total"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Total"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Input"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Output"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Cache read"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Cache write"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "Total",
+            "desc": true
+          }
+        ]
+      },
+      "description": "Per-model token split by type (input / output / cacheRead / cacheCreation) plus total \u2014 the same breakdown `claude usage` prints per model."
+    },
+    {
+      "type": "row",
+      "id": 25,
       "title": "Usage limits (rolling windows)",
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 61
+        "y": 69
       },
       "collapsed": false,
       "panels": []
     },
     {
-      "id": 25,
+      "id": 26,
       "type": "gauge",
       "title": "Tokens used in last 5h",
       "datasource": {
@@ -1301,7 +1475,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 62
+        "y": 70
       },
       "targets": [
         {
@@ -1367,7 +1541,7 @@
       "description": "Rolling 5h token usage. Set the 5h token limit variable to match your plan."
     },
     {
-      "id": 26,
+      "id": 27,
       "type": "gauge",
       "title": "Tokens used in last 7d",
       "datasource": {
@@ -1378,7 +1552,7 @@
         "h": 8,
         "w": 6,
         "x": 6,
-        "y": 62
+        "y": 70
       },
       "targets": [
         {
@@ -1444,7 +1618,7 @@
       "description": "Rolling 7d token usage. Set the weekly token limit variable to match your plan."
     },
     {
-      "id": 27,
+      "id": 28,
       "type": "stat",
       "title": "Active time per session (avg)",
       "datasource": {
@@ -1455,7 +1629,7 @@
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 62
+        "y": 70
       },
       "targets": [
         {
@@ -1488,7 +1662,7 @@
       "description": "Per distinct in-window session (not cumulative session starts)."
     },
     {
-      "id": 28,
+      "id": 29,
       "type": "piechart",
       "title": "Active time by type",
       "datasource": {
@@ -1499,7 +1673,7 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 62
+        "y": 70
       },
       "targets": [
         {
@@ -1541,19 +1715,19 @@
     },
     {
       "type": "row",
-      "id": 29,
+      "id": 30,
       "title": "Sessions & productivity",
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 70
+        "y": 78
       },
       "collapsed": false,
       "panels": []
     },
     {
-      "id": 30,
+      "id": 31,
       "type": "piechart",
       "title": "Sessions by start type",
       "datasource": {
@@ -1564,7 +1738,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 71
+        "y": 79
       },
       "targets": [
         {
@@ -1605,7 +1779,7 @@
       "description": "fresh / resume / continue / agents_view (UI launch)."
     },
     {
-      "id": 31,
+      "id": 32,
       "type": "timeseries",
       "title": "New sessions over time",
       "datasource": {
@@ -1616,7 +1790,7 @@
         "h": 8,
         "w": 10,
         "x": 6,
-        "y": 71
+        "y": 79
       },
       "targets": [
         {
@@ -1659,7 +1833,7 @@
       }
     },
     {
-      "id": 32,
+      "id": 33,
       "type": "timeseries",
       "title": "Lines of code (added/removed)",
       "datasource": {
@@ -1670,7 +1844,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 71
+        "y": 79
       },
       "targets": [
         {
@@ -1741,7 +1915,7 @@
       }
     },
     {
-      "id": 33,
+      "id": 34,
       "type": "piechart",
       "title": "Edit decisions (accept/reject)",
       "datasource": {
@@ -1752,7 +1926,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 79
+        "y": 87
       },
       "targets": [
         {
@@ -1792,7 +1966,7 @@
       }
     },
     {
-      "id": 34,
+      "id": 35,
       "type": "bargauge",
       "title": "Edit calls by language",
       "datasource": {
@@ -1803,7 +1977,7 @@
         "h": 8,
         "w": 6,
         "x": 6,
-        "y": 79
+        "y": 87
       },
       "targets": [
         {
@@ -1834,7 +2008,7 @@
       }
     },
     {
-      "id": 35,
+      "id": 36,
       "type": "bargauge",
       "title": "Cost by skill",
       "datasource": {
@@ -1845,7 +2019,7 @@
         "h": 8,
         "w": 6,
         "x": 12,
-        "y": 79
+        "y": 87
       },
       "targets": [
         {
@@ -1877,7 +2051,7 @@
       "description": "Spend attributed to the active skill / slash command."
     },
     {
-      "id": 36,
+      "id": 37,
       "type": "bargauge",
       "title": "Cost by subagent",
       "datasource": {
@@ -1888,7 +2062,7 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 79
+        "y": 87
       },
       "targets": [
         {
@@ -1921,19 +2095,19 @@
     },
     {
       "type": "row",
-      "id": 37,
+      "id": 38,
       "title": "Reliability & events (Loki)",
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 87
+        "y": 95
       },
       "collapsed": false,
       "panels": []
     },
     {
-      "id": 38,
+      "id": 39,
       "type": "stat",
       "title": "API requests",
       "datasource": {
@@ -1944,7 +2118,7 @@
         "h": 4,
         "w": 4,
         "x": 0,
-        "y": 88
+        "y": 96
       },
       "targets": [
         {
@@ -1976,7 +2150,7 @@
       }
     },
     {
-      "id": 39,
+      "id": 40,
       "type": "stat",
       "title": "Tool calls",
       "datasource": {
@@ -1987,7 +2161,7 @@
         "h": 4,
         "w": 4,
         "x": 4,
-        "y": 88
+        "y": 96
       },
       "targets": [
         {
@@ -2019,7 +2193,7 @@
       }
     },
     {
-      "id": 40,
+      "id": 41,
       "type": "stat",
       "title": "Tool failure rate",
       "datasource": {
@@ -2030,7 +2204,7 @@
         "h": 4,
         "w": 4,
         "x": 8,
-        "y": 88
+        "y": 96
       },
       "targets": [
         {
@@ -2082,7 +2256,7 @@
       }
     },
     {
-      "id": 41,
+      "id": 42,
       "type": "stat",
       "title": "API errors",
       "datasource": {
@@ -2093,7 +2267,7 @@
         "h": 4,
         "w": 4,
         "x": 12,
-        "y": 88
+        "y": 96
       },
       "targets": [
         {
@@ -2141,7 +2315,7 @@
       }
     },
     {
-      "id": 42,
+      "id": 43,
       "type": "stat",
       "title": "API refusals",
       "datasource": {
@@ -2152,7 +2326,7 @@
         "h": 4,
         "w": 4,
         "x": 16,
-        "y": 88
+        "y": 96
       },
       "targets": [
         {
@@ -2200,7 +2374,7 @@
       }
     },
     {
-      "id": 43,
+      "id": 44,
       "type": "stat",
       "title": "Retries exhausted",
       "datasource": {
@@ -2211,7 +2385,7 @@
         "h": 4,
         "w": 4,
         "x": 20,
-        "y": 88
+        "y": 96
       },
       "targets": [
         {
@@ -2259,7 +2433,7 @@
       }
     },
     {
-      "id": 44,
+      "id": 45,
       "type": "stat",
       "title": "Compactions",
       "datasource": {
@@ -2270,7 +2444,7 @@
         "h": 4,
         "w": 4,
         "x": 0,
-        "y": 92
+        "y": 100
       },
       "targets": [
         {
@@ -2302,7 +2476,7 @@
       }
     },
     {
-      "id": 45,
+      "id": 46,
       "type": "timeseries",
       "title": "Events over time (by type)",
       "datasource": {
@@ -2313,7 +2487,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 96
+        "y": 104
       },
       "targets": [
         {
@@ -2356,19 +2530,19 @@
     },
     {
       "type": "row",
-      "id": 46,
+      "id": 47,
       "title": "Latency (Tempo span metrics)",
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 104
+        "y": 112
       },
       "collapsed": false,
       "panels": []
     },
     {
-      "id": 47,
+      "id": 48,
       "type": "timeseries",
       "title": "LLM request latency (p50/p95/p99)",
       "datasource": {
@@ -2379,7 +2553,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 105
+        "y": 113
       },
       "targets": [
         {
@@ -2439,7 +2613,7 @@
       "description": "Computed by Tempo's metrics-generator from claude_code.llm_request spans."
     },
     {
-      "id": 48,
+      "id": 49,
       "type": "timeseries",
       "title": "Tool execution latency (p95 by tool)",
       "datasource": {
@@ -2450,7 +2624,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 105
+        "y": 113
       },
       "targets": [
         {
