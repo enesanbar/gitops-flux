@@ -19,26 +19,58 @@ export SCRIPT_DIR  # substituted into the config templates (extraMounts hostPath
 TOPOLOGY="${KIND_TOPOLOGY:-single}"
 CONFIG_FILE=""
 
+# Host interface the ingress proxies (socat) publish on. Loopback by default so
+# the cluster is reachable only from this machine. Set to 0.0.0.0 (or a specific
+# LAN IP) to let other machines on the network reach the ingress — see
+# --expose-lan / --bind-address below.
+BIND_ADDR="${KIND_BIND_ADDR:-127.0.0.1}"
+
+# Client mode: when set, this host runs NO cluster — it only stands up dnsmasq
+# so that *.kindcluster.dev resolves to a remote cluster's ingress at this IP.
+# Used to drive a cluster running on another machine from this laptop.
+REMOTE_HOST="${KIND_REMOTE_HOST:-}"
+
 parse_args() {
   for arg in "$@"; do
     case "${arg}" in
-      --topology=*) TOPOLOGY="${arg#*=}" ;;
+      --topology=*)     TOPOLOGY="${arg#*=}" ;;
+      --remote-host=*)  REMOTE_HOST="${arg#*=}" ;;
+      --bind-address=*) BIND_ADDR="${arg#*=}" ;;
+      --expose-lan)     BIND_ADDR="0.0.0.0" ;;
       -h|--help)
         cat <<EOF
-Usage: $(basename "$0") [--topology=single|multi]
+Usage: $(basename "$0") [--topology=single|multi] [--expose-lan | --bind-address=IP]
+       $(basename "$0") --remote-host=IP
 
-Profiles:
+Server profiles (create a cluster on this machine):
   single  (default) 1 control-plane, both data pools mounted on it
   multi             1 control-plane + 2 workers, one data pool per worker
 
+Exposing the ingress to other machines (server side):
+  --expose-lan          bind the ingress proxies to 0.0.0.0 (whole LAN)
+  --bind-address=IP     bind them to a specific host IP (e.g. this box's LAN IP)
+                        Default is 127.0.0.1 (reachable only from this machine).
+
+Client mode (no cluster; point *.${DNS_DOMAIN} at a remote cluster):
+  --remote-host=IP      run dnsmasq only, resolving *.${DNS_DOMAIN} to IP.
+                        Use this on a laptop to reach a cluster started with
+                        --expose-lan on another machine at IP.
+
 Env vars:
   KIND_TOPOLOGY=single|multi  alternative to --topology
+  KIND_BIND_ADDR=IP           alternative to --bind-address
+  KIND_REMOTE_HOST=IP         alternative to --remote-host
   KIND_SKIP_SYSCTL=1          skip the inotify limit adjustment (Linux only)
 EOF
         exit 0
         ;;
     esac
   done
+
+  # Client mode does not create a cluster, so topology/config is irrelevant.
+  if [ -n "${REMOTE_HOST}" ]; then
+    return 0
+  fi
 
   case "${TOPOLOGY}" in
     single) CONFIG_FILE="${SCRIPT_DIR}/config.single.yaml" ;;
@@ -160,25 +192,33 @@ merge_kubeconfig() {
 
 start_proxies() {
   echo "==> Step 4: Set up host-to-cluster traffic forwarding"
+  if [ "${BIND_ADDR}" != "127.0.0.1" ]; then
+    echo "    WARN: publishing ingress on ${BIND_ADDR}:80/443 — the cluster ingress"
+    echo "          will be reachable by ANY host that can route to this machine."
+    echo "          Only do this on a trusted LAN."
+  fi
   docker rm -f proxy-ingress-80 proxy-ingress-443 2>/dev/null || true
 
   docker run -d --name proxy-ingress-80 \
     --restart unless-stopped \
     --network "${DOCKER_NETWORK}" \
-    -p "127.0.0.1:80:80" \
+    -p "${BIND_ADDR}:80:80" \
     alpine/socat \
     tcp-listen:80,fork,reuseaddr tcp-connect:"${INGRESS_VIP}":80
 
   docker run -d --name proxy-ingress-443 \
     --restart unless-stopped \
     --network "${DOCKER_NETWORK}" \
-    -p "127.0.0.1:443:443" \
+    -p "${BIND_ADDR}:443:443" \
     alpine/socat \
     tcp-listen:443,fork,reuseaddr tcp-connect:"${INGRESS_VIP}":443
 }
 
 start_dnsmasq() {
   echo "==> Step 5: Set up local DNS (dnsmasq)"
+  # Loopback for a local cluster; the remote cluster's IP in client mode.
+  local dns_target="${REMOTE_HOST:-127.0.0.1}"
+  echo "    Resolving *.${DNS_DOMAIN} -> ${dns_target}"
   docker rm -f kind-dnsmasq 2>/dev/null || true
 
   docker run -d --name kind-dnsmasq \
@@ -190,7 +230,7 @@ start_dnsmasq() {
     --keep-in-foreground \
     --log-queries \
     --log-facility=- \
-    "--address=/${DNS_DOMAIN}/127.0.0.1"
+    "--address=/${DNS_DOMAIN}/${dns_target}"
 }
 
 configure_host_dns() {
@@ -267,23 +307,25 @@ EOF
 }
 
 resolves_via_system_dns() {
+  local host="$1" expected="$2"
   case "${OS}" in
-    Darwin) dscacheutil -q host -a name "$1" 2>/dev/null | grep -q '127\.0\.0\.1' ;;
-    *)      getent hosts "$1" 2>/dev/null | grep -q '127\.0\.0\.1' ;;
+    Darwin) dscacheutil -q host -a name "${host}" 2>/dev/null | grep -qF "${expected}" ;;
+    *)      getent hosts "${host}" 2>/dev/null | grep -qF "${expected}" ;;
   esac
 }
 
 smoke_check_dns() {
   echo "==> Step 7: Verify host DNS resolution (best-effort)"
   local test_host="test.${DNS_DOMAIN}"
+  local expected="${REMOTE_HOST:-127.0.0.1}"
   for _ in 1 2 3; do
-    if resolves_via_system_dns "${test_host}"; then
-      echo "    ${test_host} -> 127.0.0.1"
+    if resolves_via_system_dns "${test_host}" "${expected}"; then
+      echo "    ${test_host} -> ${expected}"
       return 0
     fi
     sleep 1
   done
-  echo "    WARN: ${test_host} does not resolve to 127.0.0.1 via system DNS yet"
+  echo "    WARN: ${test_host} does not resolve to ${expected} via system DNS yet"
   case "${OS}" in
     Darwin) echo "          Check: dscacheutil -q host -a name ${test_host}   and: docker logs kind-dnsmasq" ;;
     *)      echo "          Check: resolvectl query ${test_host}   and: docker logs kind-dnsmasq" ;;
@@ -295,7 +337,11 @@ print_summary() {
   echo "==> Cluster is ready!  (topology: ${TOPOLOGY})"
   echo "    Ingress VIP: ${INGRESS_VIP}"
   echo "    DNS: *.${DNS_DOMAIN} -> 127.0.0.1 (via dnsmasq on port ${DNS_PORT})"
-  echo "    Proxy: 127.0.0.1:80/443 -> ${INGRESS_VIP}:80/443 (via socat)"
+  echo "    Proxy: ${BIND_ADDR}:80/443 -> ${INGRESS_VIP}:80/443 (via socat)"
+  if [ "${BIND_ADDR}" != "127.0.0.1" ]; then
+    echo "    Ingress is exposed on ${BIND_ADDR} — from another machine, point it here with:"
+    echo "      ./$(basename "$0") --remote-host=<this-machine-LAN-IP>"
+  fi
   if [ "${OS}" = "Linux" ]; then
     echo "    Quick check: resolvectl query test.${DNS_DOMAIN}"
   fi
@@ -304,8 +350,38 @@ print_summary() {
   echo "    Test: curl http://test.${DNS_DOMAIN} (after creating an Ingress)"
 }
 
+print_client_summary() {
+  echo ""
+  echo "==> Client mode ready — no cluster runs here."
+  echo "    DNS: *.${DNS_DOMAIN} -> ${REMOTE_HOST} (via dnsmasq on port ${DNS_PORT})"
+  echo ""
+  echo "    The remote cluster at ${REMOTE_HOST} must publish its ingress on the LAN"
+  echo "    (start it there with --expose-lan or --bind-address=${REMOTE_HOST})."
+  echo "    TLS: trust the remote's mkcert root CA on this machine, or expect cert warnings."
+  echo "    Test: curl -k https://test.${DNS_DOMAIN}  (once an Ingress exists on the remote)"
+}
+
+# Client mode: stand up only dnsmasq + host DNS pointing at a remote cluster.
+run_client_mode() {
+  echo "==> Client mode: pointing *.${DNS_DOMAIN} at remote cluster ${REMOTE_HOST}"
+  if ! docker info >/dev/null 2>&1; then
+    echo "ERROR: cannot talk to the Docker daemon (needed to run dnsmasq)." >&2
+    exit 1
+  fi
+  start_dnsmasq
+  configure_host_dns
+  smoke_check_dns
+  print_client_summary
+}
+
 main() {
   parse_args "$@"
+
+  if [ -n "${REMOTE_HOST}" ]; then
+    run_client_mode
+    return
+  fi
+
   echo "==> Topology: ${TOPOLOGY}  (config: $(basename "${CONFIG_FILE}"))"
   preflight
   mkdir -p "${SCRIPT_DIR}/data-pool-1" "${SCRIPT_DIR}/data-pool-2"
