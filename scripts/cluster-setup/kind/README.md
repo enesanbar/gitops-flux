@@ -167,6 +167,71 @@ spec:
 
 No DNS changes, no socat changes, no config file editing. The domain resolves automatically via dnsmasq, traffic flows through socat to the MetalLB VIP, and ingress-nginx routes by Host header.
 
+## Accessing the Cluster from Another Machine
+
+By default everything binds `127.0.0.1`, so the cluster is reachable only from the machine it runs on. To offload the cluster to a second machine (e.g. a spare Linux box) and still type `<app>.kindcluster.dev` in the browser on your laptop, split the two halves of the chain across the two machines:
+
+- **Server** (runs the cluster) publishes the ingress proxies on the LAN instead of loopback.
+- **Client** (your laptop, no cluster) runs *only* dnsmasq, resolving `*.kindcluster.dev` to the server's IP.
+
+```
+Laptop browser: grafana.kindcluster.dev
+  --> host DNS routing --> dnsmasq on laptop --> resolves to SERVER_IP
+  --> SERVER_IP:80/443 (over the LAN)
+  --> socat on server (bound 0.0.0.0) --> MetalLB VIP --> ingress-nginx --> Pod
+```
+
+### 1. On the server — expose the ingress
+
+```bash
+./start.sh --expose-lan          # binds the socat proxies to 0.0.0.0
+```
+
+`--expose-lan` binds `0.0.0.0`, so **the server doesn't care what its own IP is** — this survives DHCP lease changes without re-running anything on the server. (Cluster already running? This only recreates the two proxy containers; the cluster is untouched.) Use `--bind-address=<ip>` instead if you want to pin a single interface.
+
+> **Security:** this makes the cluster ingress reachable by any host that can route to the server. Only do it on a trusted LAN. `start.sh` prints a warning when the bind address isn't loopback.
+
+### 2. On the client (laptop) — point DNS at the server
+
+The server's LAN IP is the *one* value that changes under DHCP, so keep it in a variable and everything below re-runs cleanly whenever it moves:
+
+```bash
+REMOTE_IP=192.168.0.155          # ← the only thing to update when DHCP reassigns
+./start.sh --remote-host="$REMOTE_IP"
+```
+
+This runs dnsmasq only (no cluster, no network, no proxies) and wires host DNS. Find the server's current IP on the server with `hostname -I` (Linux) or `ipconfig getifaddr en0` (macOS).
+
+**When the server's IP changes:** just re-run the client command with the new `REMOTE_IP`. Nothing else moves.
+
+### 3. TLS — trust the server's mkcert CA
+
+The ingress serves certs signed by the mkcert root CA **on the server**, which your laptop doesn't know — hence cert warnings. Copy the CA over. No SSH server is required; use the LAN you already have.
+
+First check whether you even need to — if the fingerprints already match, your laptop trusts it and you can skip the rest:
+
+```bash
+# server:  openssl x509 -in "$(mkcert -CAROOT)/rootCA.pem" -noout -fingerprint -sha256
+# laptop:  openssl x509 -in "$(mkcert -CAROOT)/rootCA.pem" -noout -fingerprint -sha256
+```
+
+Different fingerprints → copy the server's CA over HTTP:
+
+```bash
+# On the server — serve the CA dir briefly (Ctrl-C when done):
+cd "$(mkcert -CAROOT)" && python3 -m http.server 8000 --bind "$REMOTE_IP"
+#   no python3? you already have Docker:
+#   docker run --rm -p "$REMOTE_IP":8000:80 -v "$(mkcert -CAROOT)":/usr/share/nginx/html:ro nginx:alpine
+
+# On the laptop — pull it and trust it (macOS):
+curl -o /tmp/remote-rootCA.pem "http://$REMOTE_IP:8000/rootCA.pem"
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain /tmp/remote-rootCA.pem
+#   Linux:
+#   sudo cp /tmp/remote-rootCA.pem /usr/local/share/ca-certificates/kindcluster-remote.crt && sudo update-ca-certificates
+```
+
+This *adds* trust for the server's CA without touching your laptop's own mkcert CA. Restart the browser afterward. The CA rarely changes, so this is a one-time step per server (only redo it if the server re-runs `mkcert -install`).
+
 ## Cluster Topology & Storage Pools
 
 ### Two profiles
