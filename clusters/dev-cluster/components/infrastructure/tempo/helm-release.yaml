@@ -10,10 +10,16 @@ spec:
       size: 5Gi
       accessModes:
         - ReadWriteOnce
-    resources:
-      limits:
-        cpu: 500m
-        memory: 512Mi
-      requests:
-        cpu: 100m
-        memory: 256Mi
+    # NOTE: the single-binary tempo chart reads the container resources from
+    # `tempo.resources`, NOT a top-level `resources` key. A top-level block is
+    # silently dropped, leaving the pod with no memory limit — which is how the
+    # local-blocks metrics generator can balloon to multiple GB without ever
+    # being OOMKilled. Keep this under `tempo:`.
+    tempo:
+      resources:
+        limits:
+          cpu: 500m
+          memory: 1Gi
+        requests:
+          cpu: 100m
+          memory: 256Mi

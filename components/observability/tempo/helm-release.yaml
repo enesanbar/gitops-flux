@@ -70,8 +70,19 @@ spec:
               - local-blocks
       metrics_generator:
         processor:
-          local_blocks: {}
+          # local-blocks answers TraceQL metric queries (rate/quantile/
+          # histogram_over_time) from Tempo's own memory. Left unbounded it
+          # pins live traces and completed blocks in RAM indefinitely and is
+          # the primary driver of Tempo's memory growth. These knobs cap it:
+          # flush completed blocks to storage instead of holding them, evict
+          # them from memory sooner, and hard-limit concurrent live traces.
+          local_blocks:
+            flush_to_storage: true
+            complete_block_timeout: 15m
+            max_live_traces: 5000
+            trace_idle_period: 10s
         storage:
-          path: /tmp/tempo
+          # Back the generator WAL with the PVC, not the ephemeral container fs.
+          path: /var/tempo/generator/wal
           remote_write:
             - url: {{ .Values.tempo.metricsGenerator.remoteWriteUrl }}
