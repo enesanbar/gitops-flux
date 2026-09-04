@@ -20,6 +20,7 @@ resources:
 - loki.yaml
 - metallb.yaml
 - metallb-config.yaml
+- metrics-server.yaml
 #- mongodb.yaml
 - monitoring.yaml
 - n8n.yaml

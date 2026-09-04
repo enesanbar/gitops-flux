@@ -10,6 +10,7 @@ resources:
   - ingress-nginx.yaml
   - jaegertracing.yaml
   - metallb.yaml
+  - metrics-server.yaml
   - n8n.yaml
   - nccloud.yaml
   - open-telemetry.yaml
