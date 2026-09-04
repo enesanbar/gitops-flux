@@ -21,6 +21,7 @@ resources:
 - metallb-config.yaml
 #- mongodb.yaml
 - monitoring.yaml
+- n8n.yaml
 - observability.yaml
 - openclaw-operator-system.yaml
 - openclaw-operator-instances.yaml
