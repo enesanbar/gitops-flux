@@ -9,13 +9,22 @@ spec:
   chart:
     spec:
       chart: loki
-      version: "6.16.0"
+      # grafana/loki 7.x is Grafana Enterprise Logs only; the OSS chart lives on
+      # in grafana-community (forked from grafana/loki 6.55.0).
+      version: "18.12.0"
       sourceRef:
         kind: HelmRepository
-        name: grafana
+        name: grafana-community
         namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
   values:
-    deploymentMode: SingleBinary
+    # Renamed from SingleBinary; the old name still works but is deprecated.
+    deploymentMode: Monolithic
     loki:
       auth_enabled: false
       commonConfig:
@@ -63,7 +72,9 @@ spec:
         chunk_encoding: snappy
       pattern_ingester:
         enabled: true
-      ruler:
+      # The chart renders Loki's `ruler:` block from rulerConfig (there is no
+      # `loki.ruler` key), so this is where the API switch has to live.
+      rulerConfig:
         enable_api: true
     singleBinary:
       replicas: 1
@@ -83,12 +94,9 @@ spec:
       enabled: false
     gateway:
       enabled: false
-    monitoring:
-      selfMonitoring:
-        enabled: false
-        grafanaAgent:
-          installOperator: false
-      lokiCanary:
-        enabled: false
+    # Top-level switch (not monitoring.lokiCanary). The canary is a DaemonSet
+    # that writes and re-reads synthetic logs — noise on a dev cluster.
+    lokiCanary:
+      enabled: false
     test:
       enabled: false
