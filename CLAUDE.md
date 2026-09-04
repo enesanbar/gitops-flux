@@ -49,7 +49,9 @@ Mental model: `components/` is a library, `clusters/<cluster>/components/` enabl
 
 Per-cluster, components are partitioned:
 
-- `infrastructure/` — cluster-wide platform: ingress-nginx, cert-manager, metallb, monitoring stack, operators (postgres-operator, openclaw-operator), keycloak, redis, mongodb, etc.
+- `infrastructure/` — cluster-wide platform: ingress-nginx, cert-manager, metallb, metrics-server, monitoring stack, operators (postgres-operator, openclaw-operator, eck-operator), keycloak, redis, mongodb, etc.
+
+Two things in `components/monitoring/` are not Helm charts: `elasticsearch`, `kibana`, `logstash` and `filebeat` are ECK custom resources (the classic Elastic charts are EOL) managed by the `eck-operator` HelmRelease, so their Flux Kustomizations `dependsOn` it. Loki comes from the `grafana-community` HelmRepository, not `grafana` — the upstream chart went Enterprise-only at 7.x.
 - `apps/` — workloads that depend on infrastructure: kubia, fleetman-microservices, openclaw instances, kubeclaw instances.
 
 There is no enforced ordering between the two; both reconcile in parallel. If an app needs an operator CRD, the app's Flux Kustomization will retry on its `retryInterval` until the CRD exists.
@@ -73,20 +75,35 @@ Browser (https://x.kindcluster.dev)
 
 The Docker network `kind-local-dind-cluster` is pre-created with a fixed subnet `172.88.0.0/16` precisely so the MetalLB pool (`172.88.0.200-250`) and the socat target are stable across cluster recreations. `/etc/resolver/kindcluster.dev` is a one-time `sudo` write and is intentionally left in place by `stop.sh`.
 
-Worker nodes mount `scripts/cluster-setup/kind/worker-{1,2}-localpathprovisioner-data/` into `/mnt/data` so local-path-provisioner PVCs survive cluster restarts. The `*-localpathprovisioner-data*` paths are gitignored.
+### Storage pools — how data survives a cluster reinit
+
+The host dirs `scripts/cluster-setup/kind/data-pool-{1,2}` (gitignored) are bind-mounted into the node(s) at `/mnt/data-pool-{1,2}`, and the node carrying a pool is labeled `gitops-flux.local/data-pool-N=true`. Anything that must outlive `stop.sh`/`start.sh` is a **static hostPath PV** on one of those pools, declared in the cluster overlay (`clusters/dev-cluster/components/infrastructure/<comp>/pv.yaml`), never in `components/`:
+
+- PV with `hostPath: /mnt/data-pool-N/<pv-name>`, `Retain`, `nodeAffinity` on the pool label, and a `claimRef` naming the exact PVC (for StatefulSets that is the generated name, e.g. `storage-tempo-0` or `prometheus-<name>-db-prometheus-<name>-0`).
+- For Deployments, also declare the PVC (`volumeName` back-reference) and hand it to the chart via `existingClaim` / `extraVolumes`.
+- The default `standard` StorageClass (kind's local-path-provisioner) is fine for scratch data but its PVs are `Delete` and die with the cluster. Do not rely on it for anything you want back.
+
+Convention: **pool-1 = application state** (n8n, keycloak-postgres, openclaw), **pool-2 = observability** (Prometheus, Alertmanager, Grafana, Tempo, Jaeger, Loki, Elasticsearch). Copy an existing `pv.yaml` (e.g. under `clusters/dev-cluster/components/infrastructure/tempo/`) for the template; the kind README's "Storage Pools" section has the full table.
 
 Full breakdown of why each piece exists: `scripts/cluster-setup/kind/README.md`.
 
 ## TLS for local development
 
-`scripts/flux/bootstrap.sh` runs `mkcert -install` on the host, then writes the mkcert root CA into a `mkcert-ca-key-pair` secret under `cert-manager` namespace, materialized at `clusters/dev-cluster/components/infrastructure/cert-issuer/mkcert-ca-secret.yaml`. That secret is then consumed by a cert-manager ClusterIssuer (`mkcert-issuer`). Any Ingress that wants TLS just sets:
+`scripts/flux/bootstrap.sh` calls `scripts/flux/install-mkcert-ca.sh`, which runs `mkcert -install` on the host and applies the mkcert root CA directly to the cluster as the `mkcert-ca-key-pair` secret in the `cert-manager` namespace. Nothing is written to git. That secret is consumed by a cert-manager ClusterIssuer (`mkcert-issuer`). Any Ingress that wants TLS just sets:
 
 ```yaml
 annotations:
   cert-manager.io/cluster-issuer: mkcert-issuer
 ```
 
-The secret file is generated locally and committed; do not delete it without re-running bootstrap, or cert-manager will fail to issue certs for dev ingresses.
+After recreating the cluster, re-run `install-mkcert-ca.sh` (bootstrap does it for you); without the secret cert-manager cannot issue certs for dev ingresses.
+
+## Out-of-git secrets
+
+Two secrets are per-machine key material and never committed. Both are applied by `bootstrap.sh` and can be re-run standalone:
+
+- `scripts/flux/install-mkcert-ca.sh` — the mkcert CA above.
+- `scripts/flux/install-n8n-secrets.sh` — `n8n/n8n-secrets` (`N8N_ENCRYPTION_KEY` and the public URL parts). The key file lives at `scripts/cluster-setup/kind/data-pool-1/n8n-encryption-key`, next to the database it encrypts, so a reinit never produces a key/data mismatch.
 
 ## Adding a new component
 
@@ -97,6 +114,7 @@ The minimum complete change to add component `foo` to the dev cluster:
 3. Create `clusters/dev-cluster/components/{infrastructure|apps}/flux-system/kustomize/foo.yaml` as a Flux `Kustomization` pointing at `./clusters/dev-cluster/components/{infrastructure|apps}/foo` (copy from a sibling like `cert-manager.yaml`).
 4. Append `- foo.yaml` to `clusters/dev-cluster/components/{infrastructure|apps}/flux-system/kustomize/kustomization.yaml`.
 5. If pulling from a new Helm chart repo, also add a `HelmRepository` under `components/flux-system/sources/helm-repositories/` and register it there.
+6. If it is stateful and the data should survive a reinit, add a `pv.yaml` to the overlay (see "Storage pools" above) and pick the pool by convention.
 
 Skipping any of steps 2-4 is the most common mistake — the manifests will sit unused.
 
