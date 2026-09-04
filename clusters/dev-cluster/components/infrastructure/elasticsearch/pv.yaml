@@ -1,0 +1,27 @@
+# Static data-pool-2 volume for Elasticsearch, pre-bound via claimRef to the PVC name the ECK StatefulSet
+# generates (<volumeClaimTemplate>-<cluster>-es-<nodeSet>-<ordinal>), so the claim binds here instead of
+# triggering dynamic provisioning. nodeAffinity on the PV makes the scheduler follow the hostPath.
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: monitoring-elasticsearch
+spec:
+  storageClassName: standard
+  persistentVolumeReclaimPolicy: Retain
+  accessModes: [ReadWriteOnce]
+  capacity:
+    storage: 30Gi
+  hostPath:
+    path: /mnt/data-pool-2/monitoring-elasticsearch
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: gitops-flux.local/data-pool-2
+              operator: In
+              values: ["true"]
+  claimRef:
+    namespace: monitoring
+    name: elasticsearch-data-elasticsearch-es-default-0

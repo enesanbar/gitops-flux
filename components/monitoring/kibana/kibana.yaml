@@ -1,0 +1,32 @@
+apiVersion: kibana.k8s.elastic.co/v1
+kind: Kibana
+metadata:
+  name: kibana
+  namespace: monitoring
+spec:
+  version: 9.5.3
+  count: 1
+  # ECK wires the ES URL, a dedicated user and (if any) CA into Kibana from this reference.
+  elasticsearchRef:
+    name: elasticsearch
+  http:
+    tls:
+      selfSignedCertificate:
+        disabled: true # TLS terminates at the mkcert ingress; kibana-kb-http:5601 stays plain HTTP
+  config:
+    # Kibana generates absolute links (alerts, sharing, reporting) from this, not from the Host header.
+    server.publicBaseUrl: https://kibana.kindcluster.dev
+  podTemplate:
+    spec:
+      containers:
+        - name: kibana
+          env:
+            # Cap the Node heap below the container limit so the kernel OOM killer never wins the race.
+            - name: NODE_OPTIONS
+              value: "--max-old-space-size=800"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 1Gi
+            limits:
+              memory: 1Gi

@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
 - cert-issuer.yaml
 - cert-manager.yaml
+- eck-operator.yaml
 - elasticsearch.yaml
 - filebeat.yaml
 - grafana-observability-dashboards.yaml

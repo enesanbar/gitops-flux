@@ -1,0 +1,35 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: eck-operator
+  namespace: elastic-system
+spec:
+  interval: 1h
+  releaseName: eck-operator
+  chart:
+    spec:
+      chart: eck-operator
+      version: "3.5.0"
+      sourceRef:
+        kind: HelmRepository
+        name: elastic
+        namespace: flux-system
+  # The chart bundles its CRDs as a subchart (installCRDs: true by default). Helm never upgrades CRDs on
+  # its own, so tell Flux to replace them on every install/upgrade or a future ECK bump silently ships
+  # stale schemas to the operator.
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  values:
+    # Watches all namespaces (managedNamespaces: []), so the Elastic CRs can stay in `monitoring`.
+    resources:
+      requests:
+        cpu: 100m
+        memory: 150Mi
+      limits:
+        memory: 1Gi
