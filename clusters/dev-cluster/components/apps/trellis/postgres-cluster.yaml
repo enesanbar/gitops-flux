@@ -16,8 +16,11 @@
 # Storage is pre-bound to a persistent disk: the operator names the data claim
 # after the pod (`<cluster>-<serial>`), and `pvcTemplate.volumeName` points that
 # claim at the PersistentVolume a cluster tree provides under the same name,
-# whose own nodeAffinity keeps the pod on the node that mounts it. A deployment
-# without pre-provisioned storage drops `volumeName` and sets `storage.size`.
+# whose own nodeAffinity keeps the pod on the node that mounts it. A tree that
+# wants PGDATA to outlive the cluster also declares that claim, marked ready, so
+# the operator adopts it rather than initialising over it (README.md, Storage).
+# A deployment without pre-provisioned storage drops `volumeName` and sets
+# `storage.size`.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
