@@ -9,6 +9,7 @@ spec:
   chart:
     spec:
       chart: n8n
+      version: "1.11.0"
       sourceRef:
         kind: HelmRepository
         name: n8n-io
