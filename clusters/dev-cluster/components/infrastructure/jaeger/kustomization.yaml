@@ -3,3 +3,4 @@ kind: Kustomization
 resources:
   - ../../../../../components/observability/jaeger
   - ingress.yaml
+  - pv.yaml

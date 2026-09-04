@@ -1,0 +1,39 @@
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: observability-jaeger          # <namespace>-<purpose>; cluster-scoped, must be unique
+spec:
+  storageClassName: standard         # matches the PVC's (default) class; nothing dynamic runs because claimRef pre-binds
+  persistentVolumeReclaimPolicy: Retain
+  accessModes: [ReadWriteOnce]
+  capacity:
+    storage: 5Gi                     # must be >= the PVC request
+  hostPath:
+    path: /mnt/data-pool-2/observability-jaeger
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: gitops-flux.local/data-pool-2
+              operator: In
+              values: ["true"]
+  claimRef:
+    namespace: observability
+    name: jaeger-badger
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jaeger-badger
+  namespace: observability
+spec:
+  volumeMode: Filesystem
+  volumeName: observability-jaeger
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: standard
