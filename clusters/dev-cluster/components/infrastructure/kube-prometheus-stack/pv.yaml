@@ -1,0 +1,92 @@
+# Static data-pool-2 volumes for the monitoring stack. Each PV is pre-bound via claimRef to the exact
+# PVC name the operator's StatefulSet generates (<volumeClaimTemplate>-<sts>-0), so the claim binds here
+# instead of triggering dynamic provisioning. nodeAffinity lives on the PV so the scheduler follows the
+# hostPath to the pool-2 node and no chart needs a nodeSelector.
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: monitoring-prometheus
+spec:
+  storageClassName: standard
+  persistentVolumeReclaimPolicy: Retain
+  accessModes: [ReadWriteOnce]
+  capacity:
+    storage: 25Gi
+  hostPath:
+    path: /mnt/data-pool-2/monitoring-prometheus
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: gitops-flux.local/data-pool-2
+              operator: In
+              values: ["true"]
+  claimRef:
+    namespace: monitoring
+    name: prometheus-kube-prometheus-stack-prometheus-db-prometheus-kube-prometheus-stack-prometheus-0
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: monitoring-alertmanager
+spec:
+  storageClassName: standard
+  persistentVolumeReclaimPolicy: Retain
+  accessModes: [ReadWriteOnce]
+  capacity:
+    storage: 1Gi
+  hostPath:
+    path: /mnt/data-pool-2/monitoring-alertmanager
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: gitops-flux.local/data-pool-2
+              operator: In
+              values: ["true"]
+  claimRef:
+    namespace: monitoring
+    name: alertmanager-kube-prometheus-stack-alertmanager-db-alertmanager-kube-prometheus-stack-alertmanager-0
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: monitoring-grafana
+spec:
+  storageClassName: standard
+  persistentVolumeReclaimPolicy: Retain
+  accessModes: [ReadWriteOnce]
+  capacity:
+    storage: 5Gi
+  hostPath:
+    path: /mnt/data-pool-2/monitoring-grafana
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: gitops-flux.local/data-pool-2
+              operator: In
+              values: ["true"]
+  claimRef:
+    namespace: monitoring
+    name: grafana
+---
+# Grafana is a Deployment, not a StatefulSet, so the chart consumes this claim via persistence.existingClaim.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  volumeMode: Filesystem
+  volumeName: monitoring-grafana
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: standard
