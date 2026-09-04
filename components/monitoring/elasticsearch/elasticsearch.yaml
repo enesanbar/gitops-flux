@@ -1,0 +1,42 @@
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: elasticsearch
+  namespace: monitoring
+spec:
+  version: 9.5.3
+  http:
+    tls:
+      selfSignedCertificate:
+        # mkcert terminates TLS at the ingress. Keeping the in-cluster hop on plain HTTP means Logstash,
+        # Kibana and any future otel exporter talk to elasticsearch-es-http:9200 with no CA plumbing.
+        disabled: true
+  nodeSets:
+    - name: default
+      count: 1
+      config:
+        # kind nodes inherit the host's vm.max_map_count, which is too low for mmapfs and not ours to
+        # raise. niofs is slower but boots without an init container.
+        node.store.allow_mmap: false
+      podTemplate:
+        spec:
+          containers:
+            - name: elasticsearch
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 2Gi
+                limits:
+                  memory: 2Gi
+      volumeClaimTemplates:
+        # Yields PVC elasticsearch-data-elasticsearch-es-default-0; the cluster overlay pre-binds a
+        # static hostPath PV to that exact name.
+        - metadata:
+            name: elasticsearch-data
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            storageClassName: standard
+            resources:
+              requests:
+                storage: 30Gi

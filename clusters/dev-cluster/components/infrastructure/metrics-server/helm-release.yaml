@@ -1,0 +1,11 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: metrics-server
+  namespace: metrics-server
+spec:
+  values:
+    # kind's kubelets serve self-signed certs that don't carry the node IP as a
+    # SAN, so metrics-server can't verify them. Dev-cluster only.
+    args:
+      - --kubelet-insecure-tls

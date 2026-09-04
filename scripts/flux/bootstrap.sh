@@ -18,6 +18,10 @@ kubectl config use-context "${KUBE_CONTEXT_NAME}"
 # standalone after recreating the cluster or rotating the CA.
 "${SCRIPT_DIR}/install-mkcert-ca.sh" "${KUBE_CONTEXT_NAME}"
 
+# n8n's encryption key + runtime Secret. Also kept out of git; the key lives
+# next to the n8n data in data-pool-1 so reinits keep credentials readable.
+"${SCRIPT_DIR}/install-n8n-secrets.sh" "${KUBE_CONTEXT_NAME}"
+
 # Install the flux components in the cluster
 flux bootstrap github \
   --owner="${GITHUB_USERNAME}" \

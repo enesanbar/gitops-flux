@@ -243,13 +243,66 @@ This *adds* trust for the server's CA without touching your laptop's own mkcert 
 
 ### Storage pools — what they are
 
-A "storage pool" is a directory on the host (`scripts/cluster-setup/kind/data-pool-{1,2}`) bind-mounted into the kind node container at `/mnt/data-pool-{1,2}`. PVs with `hostPath: /mnt/data-pool-N/<subdir>` survive cluster recreations because the data lives on the host.
+A "storage pool" is a directory on the host (`scripts/cluster-setup/kind/data-pool-{1,2}`) bind-mounted into the kind node container at `/mnt/data-pool-{1,2}`. PVs with `hostPath: /mnt/data-pool-N/<subdir>` survive cluster recreations because the data lives on the host. `stop.sh` deletes the cluster but leaves the pools alone.
 
 The host directories are gitignored. `start.sh` creates them if missing. On Linux, files written by pods keep their container UIDs (e.g. postgres' `999`), so cleaning a pool requires `sudo rm -rf`; on macOS, Docker Desktop's file sharing maps everything to your user.
 
-### Pinning pods to a pool
+### What lives in which pool
 
-Workloads that need pool-local data declare a node selector against the pool label, **not** the hostname:
+Convention: **pool-1 = application state, pool-2 = observability.** In the multi-node profile that puts apps on worker-1 and telemetry churn (Prometheus TSDB, Elasticsearch) on worker-2.
+
+| Pool | Host subdir | PV | Bound PVC (namespace/name) | Manifest |
+| --- | --- | --- | --- | --- |
+| 1 | `n8n` | `n8n` | `n8n/n8n` | `clusters/dev-cluster/components/infrastructure/n8n/pvc.yaml` |
+| 1 | `n8n-encryption-key` | — (file, not a PV) | read by `scripts/flux/install-n8n-secrets.sh` | — |
+| 1 | `keycloak-postgres-data` | `keycloak-postgres-data` | `keycloak/keycloak-postgres-data` | `components/keycloak/postgres-pvc.yaml` |
+| 2 | `monitoring-prometheus` | `monitoring-prometheus` | `monitoring/prometheus-kube-prometheus-stack-prometheus-db-prometheus-kube-prometheus-stack-prometheus-0` | `.../kube-prometheus-stack/pv.yaml` |
+| 2 | `monitoring-alertmanager` | `monitoring-alertmanager` | `monitoring/alertmanager-kube-prometheus-stack-alertmanager-db-alertmanager-kube-prometheus-stack-alertmanager-0` | `.../kube-prometheus-stack/pv.yaml` |
+| 2 | `monitoring-grafana` | `monitoring-grafana` | `monitoring/grafana` | `.../kube-prometheus-stack/pv.yaml` |
+| 2 | `monitoring-elasticsearch` | `monitoring-elasticsearch` | `monitoring/elasticsearch-data-elasticsearch-es-default-0` | `.../elasticsearch/pv.yaml` |
+| 2 | `observability-tempo` | `observability-tempo` | `observability/storage-tempo-0` | `.../tempo/pv.yaml` |
+| 2 | `observability-loki` | `observability-loki` | `observability/storage-loki-0` | `.../loki/pv.yaml` |
+| 2 | `observability-jaeger` | `observability-jaeger` | `observability/jaeger-badger` | `.../jaeger/pv.yaml` |
+
+`...` = `clusters/dev-cluster/components/infrastructure`. Deliberately *not* on a pool: Logstash's queue, Filebeat's registry (per-node hostPath under `/var/lib`, managed by ECK), the OTel collector (stateless), SigNoz and Redis (scratch).
+
+### Declaring a pool-backed PV
+
+Copy this. It goes in the **cluster overlay** (`clusters/dev-cluster/components/infrastructure/<comp>/pv.yaml`), because host paths are a property of this kind setup, not of the component.
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: observability-tempo                 # <namespace>-<purpose>; cluster-scoped, unique
+spec:
+  storageClassName: standard                # same class the PVC will ask for; claimRef pre-binds, so nothing dynamic runs
+  persistentVolumeReclaimPolicy: Retain
+  accessModes: [ReadWriteOnce]
+  capacity:
+    storage: 10Gi                           # >= the PVC request
+  hostPath:
+    path: /mnt/data-pool-2/observability-tempo
+    type: DirectoryOrCreate
+  nodeAffinity:                             # the scheduler follows the volume; no nodeSelector needed on the pod
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: gitops-flux.local/data-pool-2
+              operator: In
+              values: ["true"]
+  claimRef:                                 # exact PVC the workload will create or that you declare next to this
+    namespace: observability
+    name: storage-tempo-0
+```
+
+- **StatefulSets** (Prometheus, Alertmanager, Tempo, Loki, Elasticsearch) create their own PVC; only the `claimRef` is needed. Kubernetes binds a PV whose `claimRef` names a not-yet-existing PVC the moment that PVC appears, even with `WaitForFirstConsumer`. The generated name is `<volumeClaimTemplate name>-<statefulset name>-<ordinal>`; check with `kubectl get pvc -n <ns>` on a running instance.
+- **Deployments** (Grafana, Jaeger, n8n) don't create PVCs: declare one next to the PV with `volumeName` pointing back at it, and hand it to the chart via `existingClaim` / `extraVolumes`.
+- `nodeAffinity` on the PV is the preferred pinning mechanism. Older manifests used a `nodeSelector` on the pod against the same label; both work, but the affinity lives with the data and cannot be forgotten when a chart is swapped. `hostPath` is immutable once a PV exists, so retrofits can add `nodeAffinity` but not change `type`.
+
+### Pinning pods to a pool (legacy)
+
+If you cannot use PV `nodeAffinity` (e.g. an operator that owns the PV), select on the pool label, **not** the hostname:
 
 ```yaml
 # Lands on whichever node hosts data-pool-1.
@@ -259,13 +312,22 @@ nodeSelector:
 
 Why labels and not `kubernetes.io/hostname: local-dind-cluster-worker`? Because the hostname depends on the topology (`...-control-plane` vs `...-worker`) and the index suffix. The pool label is topology-independent: in `single` the lone node carries both labels; in `multi` each worker carries one. Same workload manifest works on either.
 
+### Verifying persistence after a reinit
+
+```bash
+kubectl get pv | grep -E 'monitoring-|observability-|^n8n|keycloak'   # all Bound, to the PVC names in the table
+ls scripts/cluster-setup/kind/data-pool-2/                             # one subdir per PV, growing
+# Elasticsearch's generated password (ECK):
+kubectl -n monitoring get secret elasticsearch-es-elastic-user -o go-template='{{.data.elastic | base64decode}}'
+```
+
 ### Adding a new pool
 
 If you want a third pool (rare):
 
 1. Add `data-pool-3` to `.gitignore` (already covered by `data-pool-*`).
 2. Add a mount + label to each config (in `single`, also on the control-plane; in `multi`, either pin to an existing worker or add a third).
-3. Reference it from your PV as `hostPath: /mnt/data-pool-3/<subdir>` and from your pod as `nodeSelector: gitops-flux.local/data-pool-3: "true"`.
+3. Reference it from your PV as `hostPath: /mnt/data-pool-3/<subdir>` with `nodeAffinity` on `gitops-flux.local/data-pool-3`.
 
 ## Linux notes
 

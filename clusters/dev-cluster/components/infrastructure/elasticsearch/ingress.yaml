@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: elasticsearch
+  namespace: monitoring
+  annotations:
+    cert-manager.io/cluster-issuer: mkcert-issuer
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - elasticsearch.kindcluster.dev
+      secretName: elasticsearch-tls
+  rules:
+    - host: elasticsearch.kindcluster.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                # ECK-managed Service; the CR disables self-signed TLS so this hop is plain HTTP.
+                name: elasticsearch-es-http
+                port:
+                  number: 9200

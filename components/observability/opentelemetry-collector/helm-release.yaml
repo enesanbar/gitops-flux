@@ -9,16 +9,23 @@ spec:
   chart:
     spec:
       chart: opentelemetry-collector
-      version: "0.108.0"
+      version: "0.172.0"
       sourceRef:
         kind: HelmRepository
         name: open-telemetry
         namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
   values:
     mode: deployment
     replicaCount: 1
     image:
-      repository: otel/opentelemetry-collector-contrib
+      # Docker Hub pushes stopped at collector v0.123.1; ghcr.io is the only source now.
+      repository: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib
     command:
       name: otelcol-contrib
     presets:
@@ -63,7 +70,7 @@ spec:
         # when the source explicitly sets k8s.pod.ip or k8s.pod.uid as
         # resource attributes — in-cluster OTel SDKs with the Kubernetes
         # resource detector do; external clients like Claude Code do not.
-        k8sattributes:
+        k8s_attributes:
           pod_association:
             - sources:
                 - from: resource_attribute
@@ -93,7 +100,7 @@ spec:
           keys:
             - session.id
       exporters:
-        otlp/tempo:
+        otlp_grpc/tempo:
           endpoint: tempo.observability.svc.cluster.local:4317
           tls:
             insecure: true
@@ -105,8 +112,8 @@ spec:
             initial_interval: 5s
             max_interval: 30s
             max_elapsed_time: 5m
-        otlp/jaeger:
-          endpoint: jaeger-collector.observability.svc.cluster.local:4317
+        otlp_grpc/jaeger:
+          endpoint: jaeger.observability.svc.cluster.local:4317
           tls:
             insecure: true
           sending_queue:
@@ -115,7 +122,7 @@ spec:
           retry_on_failure:
             enabled: true
             max_elapsed_time: 5m
-        otlp/signoz:
+        otlp_grpc/signoz:
           endpoint: signoz-otel-collector.signoz.svc.cluster.local:4317
           tls:
             insecure: true
@@ -125,7 +132,7 @@ spec:
           retry_on_failure:
             enabled: true
             max_elapsed_time: 5m
-        otlphttp/loki:
+        otlp_http/loki:
           endpoint: http://loki.observability.svc.cluster.local:3100/otlp
           sending_queue:
             enabled: true
@@ -134,30 +141,26 @@ spec:
             enabled: true
             max_elapsed_time: 5m
         # ELK fan-out target — KEPT FOR REFERENCE, NOT WIRED INTO PIPELINE.
-        # Elasticsearch lives in `monitoring` ns over HTTPS with auto-generated
-        # credentials (secret: elasticsearch-master-credentials in `monitoring`).
-        # We don't currently authenticate, so this exporter would fail 401 on
-        # every batch — spamming collector logs ~200/min.
+        # Elasticsearch is an ECK cluster in `monitoring` (plain HTTP in-cluster,
+        # TLS only at the ingress). Its `elastic` superuser password lives in
+        # secret elasticsearch-es-elastic-user (key `elastic`) in `monitoring`,
+        # which this collector in `observability` cannot read, so an unauthenticated
+        # exporter would 401 on every batch and spam the logs.
         #
-        # ELK already receives cluster logs via the standalone `filebeat`
-        # Kustomization (clusters/dev-cluster/.../infrastructure/filebeat),
-        # so dropping this redundant fan-out doesn't lose log coverage —
-        # Claude Code logs still land in Loki via otlphttp/loki below.
+        # ELK already receives cluster logs via the `filebeat` Beat CR
+        # (components/monitoring/filebeat → Logstash → ES), so dropping this
+        # fan-out loses no coverage — Claude Code logs still land in Loki via
+        # otlp_http/loki below.
         #
         # To re-enable cleanly:
-        #   1. Use a secret-mirroring tool (e.g. emberstack/reflector) to
-        #      replicate elasticsearch-master-credentials into observability,
-        #      OR generate the ES password deterministically via the chart's
-        #      auth.password value and Kustomize-manage a Secret here.
-        #   2. Add a basicauth/es extension to the collector referencing
-        #      $ES_PASSWORD via extraEnvs.
+        #   1. Mirror elasticsearch-es-elastic-user into `observability` (e.g.
+        #      emberstack/reflector), or create a dedicated ES user + Secret here.
+        #   2. Add a basicauth/es extension referencing $ES_PASSWORD via extraEnvs.
         #   3. Set auth.authenticator: basicauth/es on this exporter.
         #   4. Re-add elasticsearch/logs to the `logs` pipeline exporters.
         # elasticsearch/logs:
         #   endpoints:
-        #     - https://elasticsearch-master.monitoring.svc.cluster.local:9200
-        #   tls:
-        #     insecure_skip_verify: true
+        #     - http://elasticsearch-es-http.monitoring.svc.cluster.local:9200
         #   logs_index: otel-logs
         #   auth:
         #     authenticator: basicauth/es
@@ -174,7 +177,7 @@ spec:
         # The prometheusremotewrite exporter still reports success against
         # Prometheus 3.x but only `target_info` actually lands — histogram
         # buckets get silently dropped in the PRW1 → Prom3 translation.
-        otlphttp/kps:
+        otlp_http/kps:
           metrics_endpoint: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090/api/v1/otlp/v1/metrics
           encoding: proto
           sending_queue:
@@ -189,25 +192,30 @@ spec:
       service:
         telemetry:
           metrics:
-            address: 0.0.0.0:8888
+            readers:
+              - pull:
+                  exporter:
+                    prometheus:
+                      host: 0.0.0.0
+                      port: 8888
         pipelines:
           traces:
             receivers: [otlp]
-            processors: [memory_limiter, k8sattributes, batch]
-            exporters: [otlp/tempo, otlp/jaeger, otlp/signoz, debug]
+            processors: [memory_limiter, k8s_attributes, batch]
+            exporters: [otlp_grpc/tempo, otlp_grpc/jaeger, otlp_grpc/signoz, debug]
           logs:
             receivers: [otlp]
             # groupbyattrs/session BEFORE batch so the resource grouping
             # is settled when the batch processor merges records of the
             # same resource into one OTLP batch.
-            processors: [memory_limiter, k8sattributes, groupbyattrs/session, batch]
+            processors: [memory_limiter, k8s_attributes, groupbyattrs/session, batch]
             # elasticsearch/logs removed pending auth wiring — ELK still
             # ingests via filebeat. See comment on the exporter above.
-            # otlp/signoz handles logs too (SigNoz ingests OTLP traces +
+            # otlp_grpc/signoz handles logs too (SigNoz ingests OTLP traces +
             # metrics + logs on the same port), so re-use the same exporter
             # we already configured for traces.
-            exporters: [otlphttp/loki, otlp/signoz, debug]
+            exporters: [otlp_http/loki, otlp_grpc/signoz, debug]
           metrics:
             receivers: [otlp]
             processors: [memory_limiter, deltatocumulative, batch]
-            exporters: [otlphttp/kps, debug]
+            exporters: [otlp_http/kps, debug]

@@ -5,8 +5,6 @@ metadata:
   namespace: n8n
 spec:
   values:
-    nodeSelector:
-      gitops-flux.local/data-pool-1: "true"
     queueMode:
       enabled: false
 
@@ -39,13 +37,12 @@ spec:
       storageClassName: ""
 
     # ----- Secrets -----
+    # N8N_ENCRYPTION_KEY (+ N8N_HOST/PORT/PROTOCOL, the chart reads all four from
+    # one Secret) is per-machine key material and lives outside git. Created by
+    # scripts/flux/install-n8n-secrets.sh, which keeps the key next to the pool
+    # data it encrypts so a cluster reinit never produces a key/data mismatch.
     secretRefs:
-      existingSecret: ""
-      env:
-        N8N_ENCRYPTION_KEY: "change-me-to-a-long-random-key-at-least-32-characters"
-        N8N_HOST: "n8n.kindcluster.dev"
-        N8N_PORT: "5678"
-        N8N_PROTOCOL: "https"
+      existingSecret: n8n-secrets
 
     # ----- Database (PostgreSQL - required for queue mode) -----
     database:

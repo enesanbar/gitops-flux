@@ -6,7 +6,6 @@ metadata:
   namespace: flux-system
 spec:
   dependsOn:
-    - name: monitoring
     - name: elasticsearch
   interval: 10m0s
   retryInterval: 30s

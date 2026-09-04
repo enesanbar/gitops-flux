@@ -9,18 +9,22 @@ spec:
   chart:
     spec:
       chart: jaeger
-      version: "3.4.1"
+      version: "4.12.0"
       sourceRef:
         kind: HelmRepository
         name: jaegertracing
         namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
   values:
-    provisionDataStore:
-      cassandra: false
-      elasticsearch: false
-      kafka: false
-    allInOne:
-      enabled: true
+    # Chart 4.x (Jaeger v2) renders a single `jaeger` Deployment + Service;
+    # the v1 allInOne/agent/collector/query split is gone.
+    jaeger:
+      replicas: 1
       resources:
         limits:
           cpu: 500m
@@ -28,14 +32,63 @@ spec:
         requests:
           cpu: 100m
           memory: 256Mi
-    storage:
-      type: memory
-    agent:
-      enabled: false
-    collector:
-      enabled: false
-    query:
-      enabled: false
-    cassandra:
-      config:
-        cluster_size: 1
+      # PVC is declared in the cluster overlay (pv.yaml), pre-bound to a
+      # data-pool-2 hostPath PV so traces survive cluster reinits.
+      extraVolumes:
+        - name: badger-data
+          persistentVolumeClaim:
+            claimName: jaeger-badger
+      extraVolumeMounts:
+        - name: badger-data
+          mountPath: /badger
+    # userconfig replaces the binary's built-in config entirely, so it must be
+    # a complete Jaeger v2 (OTel Collector) config: receivers, storage, query,
+    # health, and the pipeline wiring them together.
+    userconfig:
+      service:
+        extensions: [jaeger_storage, jaeger_query, healthcheckv2]
+        pipelines:
+          traces:
+            receivers: [otlp]
+            processors: [batch]
+            exporters: [jaeger_storage_exporter]
+        telemetry:
+          metrics:
+            level: detailed
+            readers:
+              - pull:
+                  exporter:
+                    prometheus:
+                      host: 0.0.0.0
+                      port: 8888
+      extensions:
+        # The chart's liveness/readiness probes hit :13133/status.
+        healthcheckv2:
+          use_v2: true
+          http:
+            endpoint: 0.0.0.0:13133
+        jaeger_query:
+          storage:
+            traces: primary_store
+        jaeger_storage:
+          backends:
+            primary_store:
+              badger:
+                directories:
+                  keys: /badger/keys
+                  values: /badger/values
+                ephemeral: false
+                ttl:
+                  spans: 168h # trace retention
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+            http:
+              endpoint: 0.0.0.0:4318
+      processors:
+        batch: {}
+      exporters:
+        jaeger_storage_exporter:
+          trace_storage: primary_store

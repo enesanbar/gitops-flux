@@ -1,0 +1,62 @@
+apiVersion: logstash.k8s.elastic.co/v1alpha1
+kind: Logstash
+metadata:
+  name: logstash
+  namespace: monitoring
+spec:
+  version: 9.5.3
+  count: 1
+  # Injects ECK_ES_HOSTS / ECK_ES_USER / ECK_ES_PASSWORD into the container and creates a Logstash
+  # user with the built-in logstash writer role. ECK_ES_SSL_CERTIFICATE_AUTHORITY is only set when the
+  # ES HTTP layer has TLS, which ours does not, so the pipeline must not reference it.
+  elasticsearchRefs:
+    - name: elasticsearch
+      clusterName: eck
+  pipelines:
+    - pipeline.id: main
+      config.string: |
+        input {
+          beats {
+            port => 5044
+          }
+        }
+        output {
+          elasticsearch {
+            hosts => [ "${ECK_ES_HOSTS}" ]
+            user => "${ECK_ES_USER}"
+            password => "${ECK_ES_PASSWORD}"
+            # Data streams, not filebeat-YYYY.MM.dd: the role ECK grants this user only covers the
+            # logs-*, metrics-*, logstash-* (etc.) patterns, so a classic filebeat-* index is a 403.
+            # Lands in logs-filebeat-default.
+            data_stream => "true"
+            data_stream_type => "logs"
+            data_stream_dataset => "filebeat"
+            data_stream_namespace => "default"
+          }
+        }
+  services:
+    # Renders as Service logstash-ls-beats; Filebeat points at it.
+    - name: beats
+      service:
+        spec:
+          type: ClusterIP
+          ports:
+            - name: beats
+              port: 5044
+              protocol: TCP
+              targetPort: 5044
+  podTemplate:
+    spec:
+      containers:
+        - name: logstash
+          env:
+            # The image's jvm.options pins a 1g heap; inside a 1Gi cgroup that is an OOMKill loop once
+            # metaspace and off-heap buffers are counted. LS_JAVA_OPTS is appended, and last -Xmx wins.
+            - name: LS_JAVA_OPTS
+              value: "-Xms512m -Xmx512m"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 1Gi
+            limits:
+              memory: 1Gi

@@ -5,6 +5,8 @@ metadata:
   name: kube-prometheus-stack
   namespace: flux-system
 spec:
+  dependsOn:
+  - name: monitoring
   interval: 10m0s
   retryInterval: 30s
   timeout: 30m0s

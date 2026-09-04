@@ -5,6 +5,16 @@ metadata:
   name: n8n
 spec:
   storageClassName: standard
+  persistentVolumeReclaimPolicy: Retain
+  # Pin the volume to whichever node carries the pool; the scheduler then places
+  # the pod there without a nodeSelector on the workload.
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: gitops-flux.local/data-pool-1
+              operator: In
+              values: ["true"]
   accessModes:
     - ReadWriteOnce
   capacity:

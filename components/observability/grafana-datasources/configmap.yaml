@@ -13,7 +13,7 @@ data:
         uid: tempo
         type: tempo
         access: proxy
-        url: http://tempo.observability.svc.cluster.local:3100
+        url: http://tempo.observability.svc.cluster.local:3200
         jsonData:
           # Claude Code emits traces and logs from different instrumentation
           # scopes (com.anthropic.claude_code.tracing vs .events). Logs do
@@ -62,7 +62,7 @@ data:
         uid: jaeger
         type: jaeger
         access: proxy
-        url: http://jaeger-query.observability.svc.cluster.local:16686
+        url: http://jaeger.observability.svc.cluster.local:16686
         jsonData:
           tracesToLogsV2:
             datasourceUid: loki
