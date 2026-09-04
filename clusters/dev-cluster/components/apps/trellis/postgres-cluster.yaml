@@ -18,9 +18,10 @@
 # claim at the PersistentVolume a cluster tree provides under the same name,
 # whose own nodeAffinity keeps the pod on the node that mounts it. A tree that
 # wants PGDATA to outlive the cluster also declares that claim, marked ready, so
-# the operator adopts it rather than initialising over it (README.md, Storage).
-# A deployment without pre-provisioned storage drops `volumeName` and sets
-# `storage.size`.
+# the operator adopts it rather than initialising over it (deploy/kind/README.md,
+# Storage). The name welds the template to serial 1: a replacement instance
+# would be `trellis-pg-2`, whose claim asks for a volume already bound, and
+# Pend. A deployment without pre-provisioned storage drops `volumeName`.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -39,9 +40,7 @@ spec:
       database: trellis
       owner: trellis
       # Field for field the POSTGRES_INITDB_ARGS the compose and CI servers are
-      # initialised with. The builtin C.UTF-8 provider orders by code point on
-      # every platform, which is what makes a keyset cursor built on one server
-      # valid on another.
+      # initialised with; ADR-197 §2 says why this locale.
       encoding: UTF8
       localeProvider: builtin
       builtinLocale: C.UTF-8

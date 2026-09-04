@@ -9,7 +9,7 @@
 # to start, and the instance crash-loops harmlessly until the Cluster has been
 # applied once ahead of the claim. Bootstrap it once, from this directory:
 #   flux suspend kustomization trellis
-#   kubectl -n trellis delete cluster trellis-pg database trellis-pg-trellis   # takes the claim along
+#   kubectl -n trellis delete cluster/trellis-pg database/trellis-pg-trellis   # the operator owns the claim, so it goes too
 #   kubectl patch pv trellis-pg-1 --type=json \
 #     -p '[{"op":"remove","path":"/spec/claimRef/uid"},{"op":"remove","path":"/spec/claimRef/resourceVersion"}]'
 #   kubectl apply -f namespace.yaml -f pv.yaml -f postgres-cluster.yaml
