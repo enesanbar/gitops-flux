@@ -1,0 +1,56 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: n8n
+  namespace: n8n
+spec:
+  values:
+    nodeSelector:
+      gitops-flux.local/data-pool-1: "true"
+    queueMode:
+      enabled: false
+
+    ingress:
+      enabled: true
+      className: nginx
+      annotations:
+        cert-manager.io/cluster-issuer: mkcert-issuer
+      sticky:
+        enabled: false
+        cookieName: n8n_affinity
+        cookieExpires: "172800"  # 2 days in seconds
+        cookieMaxAge: "172800"   # 2 days in seconds
+      hosts:
+        - host: n8n.kindcluster.dev
+          paths:
+            - path: /
+              pathType: Prefix
+      tls:
+        - hosts:
+            - n8n.kindcluster.dev
+          secretName: n8n-tls
+
+    # ----- Persistence -----
+    persistence:
+      enabled: true
+      existingClaim: "n8n"
+      accessModes: [ "ReadWriteOnce" ]
+      size: 10Gi
+      storageClassName: ""
+
+    # ----- Secrets -----
+    secretRefs:
+      existingSecret: ""
+      env:
+        N8N_ENCRYPTION_KEY: "change-me-to-a-long-random-key-at-least-32-characters"
+        N8N_HOST: "n8n.kindcluster.dev"
+        N8N_PORT: "5678"
+        N8N_PROTOCOL: "https"
+
+    # ----- Database (PostgreSQL - required for queue mode) -----
+    database:
+      type: sqlite
+      useExternal: false
+
+    redis:
+      enabled: false
