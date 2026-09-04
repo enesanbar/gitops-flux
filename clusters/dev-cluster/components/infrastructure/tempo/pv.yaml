@@ -1,0 +1,26 @@
+# Pre-bound to the PVC the Tempo StatefulSet generates from its
+# volumeClaimTemplate (`<vct-name>-<sts-name>-0` = `storage-tempo-0`), so the
+# chart needs no existingClaim and data survives cluster reinits on data-pool-2.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: observability-tempo
+spec:
+  storageClassName: standard           # matches the PVC's class; nothing dynamic runs because claimRef pre-binds
+  persistentVolumeReclaimPolicy: Retain
+  accessModes: [ReadWriteOnce]
+  capacity:
+    storage: 10Gi                      # must be >= the PVC request
+  hostPath:
+    path: /mnt/data-pool-2/observability-tempo
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: gitops-flux.local/data-pool-2
+              operator: In
+              values: ["true"]
+  claimRef:
+    namespace: observability
+    name: storage-tempo-0              # exact PVC name the StatefulSet will create

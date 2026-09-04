@@ -5,6 +5,7 @@ resources:
   - bitnami.yaml
   - elastic.yaml
   - grafana.yaml
+  - grafana-community.yaml
   - headlamp.yaml
   - ingress-nginx.yaml
   - jaegertracing.yaml

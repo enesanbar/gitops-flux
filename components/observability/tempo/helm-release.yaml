@@ -9,66 +9,28 @@ spec:
   chart:
     spec:
       chart: tempo
-      version: "1.10.0"
+      # grafana/tempo (1.x) is deprecated; the single-binary chart is maintained
+      # at grafana-community, same values layout.
+      version: "2.3.0"
       sourceRef:
         kind: HelmRepository
-        name: grafana
+        name: grafana-community
         namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
   values:
     tempo:
       reportingEnabled: false
+      # Blocks outlive pod restarts now that /var/tempo sits on a PV, so a
+      # week of traces is meaningful and still fits comfortably in 10Gi.
+      retention: 168h
       metricsGenerator:
         enabled: true
         remoteWriteUrl: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090/api/v1/write
-      receivers:
-        otlp:
-          protocols:
-            grpc:
-              endpoint: 0.0.0.0:4317
-            http:
-              endpoint: 0.0.0.0:4318
-    persistence:
-      enabled: false
-    serviceMonitor:
-      enabled: false
-
-    # Override the chart's top-level tempo.yaml template. The default
-    # hardcodes `metrics_generator_processors: [service-graphs, span-metrics]`
-    # and does not expose any way to set `metrics_generator.processor` —
-    # without that block the local-blocks processor is never instantiated
-    # and TraceQL metric queries (rate(), quantile(), histogram_over_time)
-    # error with "localblocks processor not found" from Grafana's
-    # Traces Drilldown. Add local-blocks to the processors list and its
-    # config stanza here. The {{ .Values… }} substitutions are kept
-    # verbatim because the chart re-runs `tpl` on this value.
-    config: |
-      multitenancy_enabled: {{ .Values.tempo.multitenancyEnabled }}
-      usage_report:
-        reporting_enabled: {{ .Values.tempo.reportingEnabled }}
-      compactor:
-        compaction:
-          block_retention: {{ .Values.tempo.retention }}
-      distributor:
-        receivers:
-          {{- toYaml .Values.tempo.receivers | nindent 10 }}
-      ingester:
-        {{- toYaml .Values.tempo.ingester | nindent 8 }}
-      server:
-        {{- toYaml .Values.tempo.server | nindent 8 }}
-      storage:
-        {{- toYaml .Values.tempo.storage | nindent 8 }}
-      querier:
-        {{- toYaml .Values.tempo.querier | nindent 8 }}
-      query_frontend:
-        {{- toYaml .Values.tempo.queryFrontend | nindent 8 }}
-      overrides:
-        defaults:
-          metrics_generator:
-            processors:
-              - service-graphs
-              - span-metrics
-              - local-blocks
-      metrics_generator:
         processor:
           # local-blocks answers TraceQL metric queries (rate/quantile/
           # histogram_over_time) from Tempo's own memory. Left unbounded it
@@ -81,8 +43,35 @@ spec:
             complete_block_timeout: 15m
             max_live_traces: 5000
             trace_idle_period: 10s
+        # Chart defaults are /tmp/tempo and /tmp/traces, and the chart mounts
+        # /tmp as an emptyDir — off the PVC. Keep the generator's WALs next to
+        # the trace data so they survive restarts too.
         storage:
-          # Back the generator WAL with the PVC, not the ephemeral container fs.
           path: /var/tempo/generator/wal
-          remote_write:
-            - url: {{ .Values.tempo.metricsGenerator.remoteWriteUrl }}
+        traces_storage:
+          path: /var/tempo/generator/traces
+      overrides:
+        defaults:
+          metrics_generator:
+            # local-blocks is what serves TraceQL metric queries from Grafana
+            # Traces Drilldown; without it they fail with "localblocks
+            # processor not found". The other two feed the service graph and
+            # RED metrics into Prometheus via remote_write.
+            processors:
+              - service-graphs
+              - span-metrics
+              - local-blocks
+      receivers:
+        # The chart's default jaeger/opencensus receivers stay on as well (Helm
+        # deep-merges maps and the Service template dereferences them, so they
+        # cannot be nulled). Only OTLP is actually used, via the otel-collector.
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+            http:
+              endpoint: 0.0.0.0:4318
+    persistence:
+      enabled: false
+    serviceMonitor:
+      enabled: false
