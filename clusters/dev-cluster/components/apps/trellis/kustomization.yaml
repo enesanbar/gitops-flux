@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - pv.yaml
+  - postgres-cluster.yaml
+# Nothing here is Flux's to prune: the namespace holds the KEK Secret the chart
+# consumes, the volume holds PGDATA, and the Cluster is the control plane.
+commonAnnotations:
+  kustomize.toolkit.fluxcd.io/prune: disabled

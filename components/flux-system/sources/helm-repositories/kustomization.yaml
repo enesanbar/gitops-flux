@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: flux-system
 resources:
   - bitnami.yaml
+  - cloudnative-pg.yaml
   - elastic.yaml
   - grafana.yaml
   - grafana-community.yaml
@@ -18,8 +19,6 @@ resources:
   - jetstack.yaml
   - kubeclaw.yaml
   - openclaw-operator.yaml
-  - postgres-operator.yaml
-  - postgres-operator-ui.yaml
   - sealed-secrets.yaml
   - signoz.yaml
   - tofu-controller.yaml

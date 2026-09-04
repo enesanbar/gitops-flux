@@ -1,0 +1,33 @@
+# CloudNativePG operator. The 1.30.x line supports Kubernetes 1.34–1.36 and
+# PostgreSQL 14–18; the version is pinned to what the tenant cluster runs so a
+# Cluster proven here is proven against the same operator.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cloudnative-pg
+  namespace: cnpg-system
+spec:
+  interval: 1h
+  releaseName: cloudnative-pg
+  chart:
+    spec:
+      chart: cloudnative-pg
+      version: "0.29.0"
+      sourceRef:
+        kind: HelmRepository
+        name: cloudnative-pg
+        namespace: flux-system
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  values:
+    crds:
+      create: true
+    image:
+      repository: ghcr.io/cloudnative-pg/cloudnative-pg
+      tag: "1.30.0"

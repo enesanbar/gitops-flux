@@ -256,6 +256,7 @@ Convention: **pool-1 = application state, pool-2 = observability.** In the multi
 | 1 | `n8n` | `n8n` | `n8n/n8n` | `clusters/dev-cluster/components/infrastructure/n8n/pvc.yaml` |
 | 1 | `n8n-encryption-key` | — (file, not a PV) | read by `scripts/flux/install-n8n-secrets.sh` | — |
 | 1 | `keycloak-postgres-data` | `keycloak-postgres-data` | `keycloak/keycloak-postgres-data` | `components/keycloak/postgres-pvc.yaml` |
+| 1 | `trellis-pg` | `trellis-pg-1` | `trellis/trellis-pg-1` (the CloudNativePG operator's own claim, `<cluster>-<serial>`) | `clusters/dev-cluster/components/apps/trellis/pv.yaml` |
 | 2 | `monitoring-prometheus` | `monitoring-prometheus` | `monitoring/prometheus-kube-prometheus-stack-prometheus-db-prometheus-kube-prometheus-stack-prometheus-0` | `.../kube-prometheus-stack/pv.yaml` |
 | 2 | `monitoring-alertmanager` | `monitoring-alertmanager` | `monitoring/alertmanager-kube-prometheus-stack-alertmanager-db-alertmanager-kube-prometheus-stack-alertmanager-0` | `.../kube-prometheus-stack/pv.yaml` |
 | 2 | `monitoring-grafana` | `monitoring-grafana` | `monitoring/grafana` | `.../kube-prometheus-stack/pv.yaml` |
@@ -315,7 +316,7 @@ Why labels and not `kubernetes.io/hostname: local-dind-cluster-worker`? Because 
 ### Verifying persistence after a reinit
 
 ```bash
-kubectl get pv | grep -E 'monitoring-|observability-|^n8n|keycloak'   # all Bound, to the PVC names in the table
+kubectl get pv | grep -E 'monitoring-|observability-|^n8n|keycloak|trellis-pg'   # all Bound, to the PVC names in the table
 ls scripts/cluster-setup/kind/data-pool-2/                             # one subdir per PV, growing
 # Elasticsearch's generated password (ECK):
 kubectl -n monitoring get secret elasticsearch-es-elastic-user -o go-template='{{.data.elastic | base64decode}}'

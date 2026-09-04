@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
 - cert-issuer.yaml
 - cert-manager.yaml
+- cnpg-system.yaml
 - eck-operator.yaml
 - elasticsearch.yaml
 - filebeat.yaml
@@ -29,7 +30,6 @@ resources:
 - openclaw-operator-instances.yaml
 - openclaw-raw-instances.yaml
 - opentelemetry-collector.yaml
-- postgres-operator-system.yaml
 #- rabbitmq.yaml
 - redis.yaml
 - redis-insight.yaml

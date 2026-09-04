@@ -1,0 +1,85 @@
+# Verbatim copy of deploy/kind/postgresql.yaml in the trellis repository, the
+# reference Cluster whose image and initdb that repository's guard holds to its
+# PostgreSQL pin. Edit there, then copy here; pv.yaml beside this file is the
+# volume its pvcTemplate.volumeName binds to.
+# Control-plane PostgreSQL for the kind release, run by the CloudNativePG operator.
+# This is the reference Cluster: a gitops tree carries it verbatim, and
+# `scripts/postgres-image-guard.mjs` holds its image and `initdb` block to the
+# server `scripts/postgres-conformance.mjs` pins — same major, same Debian suite,
+# same locale — so the cluster proves what CI proves (ADR-197).
+#
+# Carries no credential. The operator generates the `trellis` role's password and
+# publishes two Secrets the chart consumes: `trellis-pg-app`, whose `uri` key is
+# the whole postgresql:// URL, and `trellis-pg-ca`, whose `ca.crt` the pods trust
+# for a verify-full connection (deploy/kind/values.yaml).
+#
+# Storage is pre-bound to a persistent disk: the operator names the data claim
+# after the pod (`<cluster>-<serial>`), and `pvcTemplate.volumeName` points that
+# claim at the PersistentVolume a cluster tree provides under the same name,
+# whose own nodeAffinity keeps the pod on the node that mounts it. A deployment
+# without pre-provisioned storage drops `volumeName` and sets `storage.size`.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: trellis-pg
+  namespace: trellis
+spec:
+  # One instance: this is a local cluster and the operator's failover machinery
+  # is not what the release is exercising.
+  instances: 1
+  # The `standard` flavour is the one that ships pgvector; `minimal` does not.
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.6-standard-trixie
+  bootstrap:
+    initdb:
+      # The role the release connects as and the database it owns. Not a
+      # superuser: the api creates its own tables, never the database.
+      database: trellis
+      owner: trellis
+      # Field for field the POSTGRES_INITDB_ARGS the compose and CI servers are
+      # initialised with. The builtin C.UTF-8 provider orders by code point on
+      # every platform, which is what makes a keyset cursor built on one server
+      # valid on another.
+      encoding: UTF8
+      localeProvider: builtin
+      builtinLocale: C.UTF-8
+      localeCollate: C
+      localeCType: C
+      dataChecksums: true
+  storage:
+    pvcTemplate:
+      volumeName: trellis-pg-1
+      storageClassName: standard
+      accessModes:
+        - ReadWriteOnce
+      volumeMode: Filesystem
+      resources:
+        requests:
+          storage: 2Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+---
+# The application database as the operator sees it. initdb above creates it;
+# this object adopts it, and its one job is the extension: `vector.control` is
+# not a trusted extension, so the `trellis` role cannot create it, and the api's
+# own `CREATE EXTENSION IF NOT EXISTS vector` is a no-op once the operator has.
+# A pgvector upgrade is a `version:` line on the entry — the operator runs
+# `ALTER EXTENSION vector UPDATE` for it.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: trellis-pg-trellis
+  namespace: trellis
+spec:
+  name: trellis
+  owner: trellis
+  cluster:
+    name: trellis-pg
+  extensions:
+    - name: vector
+      ensure: present
+  # Deleting this object must not drop the control plane.
+  databaseReclaimPolicy: retain

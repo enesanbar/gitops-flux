@@ -1,0 +1,29 @@
+# Static data-pool-1 volume for the trellis control-plane database. Pre-bound via claimRef to the
+# exact PVC name the CloudNativePG operator generates for the first instance (<cluster>-<serial>),
+# which postgres-cluster.yaml's pvcTemplate.volumeName points back at, so the claim binds here
+# instead of triggering dynamic provisioning. nodeAffinity lives on the PV so the scheduler follows
+# the hostPath to the pool-1 node and the Cluster needs no nodeSelector.
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: trellis-pg-1
+spec:
+  storageClassName: standard
+  persistentVolumeReclaimPolicy: Retain
+  accessModes: [ReadWriteOnce]
+  capacity:
+    storage: 2Gi
+  hostPath:
+    path: /mnt/data-pool-1/trellis-pg
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: gitops-flux.local/data-pool-1
+              operator: In
+              values: ["true"]
+  claimRef:
+    namespace: trellis
+    name: trellis-pg-1
