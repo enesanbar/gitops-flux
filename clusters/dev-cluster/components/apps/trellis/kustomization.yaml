@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - pv.yaml
+  - pvc.yaml
   - postgres-cluster.yaml
 # Nothing here is Flux's to prune: the namespace holds the KEK Secret the chart
 # consumes, the volume holds PGDATA, and the Cluster is the control plane.

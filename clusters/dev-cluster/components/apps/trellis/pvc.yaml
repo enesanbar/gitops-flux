@@ -1,0 +1,42 @@
+# The operator's own data claim for the first instance, declared here rather
+# than left to the operator, and marked ready. A claim the operator creates
+# itself starts `initializing`, and its initdb job initialises the volume it is
+# given — over the PGDATA the pool retained from the previous cluster (measured:
+# the rows were gone). A claim that is already `ready` when the Cluster arrives
+# is adopted instead, so a rebuilt kind cluster comes back with its data.
+#
+# The cost is the FIRST bootstrap on an empty pool: a ready claim has no PGDATA
+# to start, and the instance crash-loops harmlessly until the Cluster has been
+# applied once ahead of the claim. Bootstrap it once, from this directory:
+#   flux suspend kustomization trellis
+#   kubectl -n trellis delete cluster trellis-pg database trellis-pg-trellis   # takes the claim along
+#   kubectl patch pv trellis-pg-1 --type=json \
+#     -p '[{"op":"remove","path":"/spec/claimRef/uid"},{"op":"remove","path":"/spec/claimRef/resourceVersion"}]'
+#   kubectl apply -f namespace.yaml -f pv.yaml -f postgres-cluster.yaml
+#   kubectl -n trellis wait --for=condition=Ready cluster/trellis-pg --timeout=10m
+#   flux resume kustomization trellis        # layers this claim onto the operator's; it stays Ready
+# The same patch reopens the volume after any in-cluster `kubectl delete cluster`,
+# which garbage-collects the claim and leaves a stale claimRef.uid on the volume.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: trellis-pg-1
+  namespace: trellis
+  labels:
+    cnpg.io/cluster: trellis-pg
+    cnpg.io/instanceName: trellis-pg-1
+    cnpg.io/instanceRole: primary
+    cnpg.io/pvcRole: PG_DATA
+    role: primary
+  annotations:
+    cnpg.io/nodeSerial: "1"
+    cnpg.io/pvcStatus: ready
+spec:
+  volumeName: trellis-pg-1
+  storageClassName: standard
+  accessModes: [ReadWriteOnce]
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 2Gi

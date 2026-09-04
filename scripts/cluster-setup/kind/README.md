@@ -265,7 +265,7 @@ Convention: **pool-1 = application state, pool-2 = observability.** In the multi
 | 2 | `observability-loki` | `observability-loki` | `observability/storage-loki-0` | `.../loki/pv.yaml` |
 | 2 | `observability-jaeger` | `observability-jaeger` | `observability/jaeger-badger` | `.../jaeger/pv.yaml` |
 
-`...` = `clusters/dev-cluster/components/infrastructure`. Deliberately *not* on a pool: Logstash's queue, Filebeat's registry (per-node hostPath under `/var/lib`, managed by ECK), the OTel collector (stateless), SigNoz and Redis (scratch).
+`...` = `clusters/dev-cluster/components/infrastructure`. `trellis-pg-1` is the one claim an operator generates that is nevertheless declared in git (`apps/trellis/pvc.yaml`): CloudNativePG adopts a claim it finds already `ready` and initialises over one it creates itself, so the declaration is what lets a rebuild keep the data; the file says how the first bootstrap on an empty pool differs. Deliberately *not* on a pool: Logstash's queue, Filebeat's registry (per-node hostPath under `/var/lib`, managed by ECK), the OTel collector (stateless), SigNoz and Redis (scratch).
 
 ### Declaring a pool-backed PV
 
