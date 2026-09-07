@@ -48,6 +48,13 @@ spec:
       # RWO PVC + RollingUpdate deadlocks: the new pod can't mount until the old one lets go.
       deploymentStrategy:
         type: Recreate
+      # Dashboard ConfigMaps carry a `grafana_folder` annotation; the sidecar only
+      # honours it with both of these set, otherwise everything lands in General.
+      sidecar:
+        dashboards:
+          folderAnnotation: grafana_folder
+          provider:
+            foldersFromFilesStructure: true
 
     prometheus:
       ingress:
