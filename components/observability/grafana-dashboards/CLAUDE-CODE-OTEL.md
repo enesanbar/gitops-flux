@@ -14,7 +14,13 @@ Claude Code (OTel SDK)
       └─ traces → Tempo / Jaeger / SigNoz                             → Grafana "Tempo"
 ```
 
-Metrics are counters (`claude_code.*`). Events (`api_request`, `tool_result`,
+Metrics are counters. Prometheus's OTLP receiver stores them in its default
+translated form (`translation_strategy: UnderscoreEscapingWithSuffixes`): the
+OTel metric `claude_code.cost.usage` (unit `USD`) becomes
+`claude_code_cost_usage_USD_total`, and every dotted attribute becomes an
+underscored label (`user.email` → `user_email`, `session.id` → `session_id`).
+Query the translated names in PromQL and Grafana; the dotted names below are
+what you *set*, not what you *query*. Events (`api_request`, `tool_result`,
 `api_error`, …) are logs in Loki, reachable by their `event_name` structured
 metadata. Latency panels read Tempo's span-metrics.
 
@@ -110,7 +116,7 @@ OTEL_RESOURCE_ATTRIBUTES"); they light up automatically once the attribute flows
 
 ## How totals are aggregated (important)
 
-`claude_code.*` are **cumulative counters scoped per session** — each session.id is
+`claude_code_*` are **cumulative counters scoped per session** — each session_id is
 its own monotonic series that stops reporting (goes stale) when the session ends. That
 breaks the two obvious aggregations:
 
@@ -144,7 +150,7 @@ These are fine on the dev cluster but worth doing before this fans out widely:
   At dashboard scale, back them with Prometheus recording rules
   (`claude_code:token_usage:increase7d`, …) and point the gauges at the recorded
   series. Dashboard refresh is already set to `5m` to keep this cheap meanwhile.
-- **Cost split by cache is not directly available.** `claude_code.cost.usage` has
+- **Cost split by cache is not directly available.** `claude_code_cost_usage_USD_total` has
   no token-`type` label, so we can show tokens cached-vs-fresh and a blended
   "cost per 1M tokens", but not the *dollars* attributable to cache vs fresh. A
   true cache-$-savings panel needs a per-model price table (PromQL recording
@@ -157,8 +163,8 @@ These are fine on the dev cluster but worth doing before this fans out widely:
 
 The JSON is built by `gen_dashboards.py` (next to the dashboard). `kustomize`
 only picks up the `.json` file, so the generator ships alongside it without
-being rendered into the ConfigMap. It owns the shared filter-injection idiom
-(dotted OTel labels must be quoted in PromQL: `{"user.email"=~"$user"}`), panel
+being rendered into the ConfigMap. It owns the metric catalog (in Prometheus's
+translated form — see the pipeline recap), the filter-injection idiom, panel
 layout, and unique ids. Edit the generator, re-run it, and it overwrites the
 JSON in place; `kustomize` re-renders it into the
 `grafana-dashboard-claude-code` ConfigMap, which Grafana's sidecar reloads.
