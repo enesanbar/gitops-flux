@@ -20,26 +20,7 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [
-    {
-      "title": "Overview",
-      "type": "link",
-      "url": "/d/claude-code-usage",
-      "icon": "dashboard"
-    },
-    {
-      "title": "Automated",
-      "type": "link",
-      "url": "/d/claude-code-automated",
-      "icon": "dashboard"
-    },
-    {
-      "title": "Workflows",
-      "type": "link",
-      "url": "/d/claude-code-workflows",
-      "icon": "dashboard"
-    }
-  ],
+  "links": [],
   "panels": [
     {
       "type": "row",

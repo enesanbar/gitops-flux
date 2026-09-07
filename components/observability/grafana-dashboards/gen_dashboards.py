@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Generate the three Claude Code Grafana dashboards.
+"""Generate the Claude Code · Overview Grafana dashboard.
 
-Why a generator instead of hand-written JSON: three dashboards share the same
-metric catalog, the same filter-injection idiom (dotted OTel labels must be
-quoted in PromQL: {"user.email"=~"$user"}), and the same panel recipes.
-Hand-maintaining ~1500 lines of JSON across three files drifts immediately.
+Why a generator instead of hand-written JSON: ~50 panels share one metric
+catalog, one filter-injection idiom (dotted OTel labels must be quoted in
+PromQL: {"user.email"=~"$user"}), and a handful of panel recipes.
+Hand-maintaining ~1000 lines of JSON drifts immediately.
 This script is the source of truth; the JSON is the build artifact.
 
 Metric catalog (verified against live Prometheus), with the labels each carries:
@@ -24,6 +24,7 @@ structured metadata reachable as `| event_name="..."`. Dots become underscores
 in Loki (session.id -> session_id, run.mode -> run_mode, user.email -> user_email).
 """
 import json
+import os
 
 COST   = "claude_code.cost.usage_USD_total"
 TOK    = "claude_code.token.usage_tokens_total"
@@ -281,11 +282,7 @@ def dashboard(uid, title, panels, variables, description, tags):
             "enable": True, "hide": True, "iconColor": "rgba(0, 211, 255, 1)",
             "name": "Annotations & Alerts", "type": "dashboard"}]},
         "description": description, "editable": True, "fiscalYearStartMonth": 0,
-        "graphTooltip": 1, "id": None, "links": [
-            {"title": "Overview", "type": "link", "url": "/d/claude-code-usage", "icon": "dashboard"},
-            {"title": "Automated", "type": "link", "url": "/d/claude-code-automated", "icon": "dashboard"},
-            {"title": "Workflows", "type": "link", "url": "/d/claude-code-workflows", "icon": "dashboard"},
-        ],
+        "graphTooltip": 1, "id": None, "links": [],
         "panels": panels, "refresh": "5m", "schemaVersion": 39,
         "tags": tags, "templating": {"list": variables},
         "time": {"from": "now-24h", "to": "now"},
@@ -508,207 +505,9 @@ def build_overview():
                      ["claude-code", "observability", "ai", "cost"])
 
 
-# ===========================================================================
-# AUTOMATED dashboard — claude -p runs in pods, keyed on run.mode=automated
-# ===========================================================================
-def build_automated():
-    b = Builder()
-    A_FULL = ['"run.mode"="automated"', '"run.user"=~"$auser"', '"run.role"=~"$role"',
-              '"run.task"=~"$task"', 'model=~"$model"', 'effort=~"$effort"',
-              '"team.id"=~"$team"', '"run.env"=~"$env"', '"session.id"=~"$session"']
-    A_FULL_NS = [f for f in A_FULL if "session.id" not in f]
-    A_BASE = ['"run.mode"="automated"', '"run.user"=~"$auser"', '"run.role"=~"$role"',
-              '"run.task"=~"$task"', '"team.id"=~"$team"', '"run.env"=~"$env"', '"session.id"=~"$session"']
-    L = '{service_name=~"claude-code.*", session_id=~"$session"} | run_mode="automated"'
-
-    b.text("Populating this dashboard",
-           "This view shows **automated** runs (`claude -p` in pods / scripts). It fills in once your "
-           "automation sets `OTEL_RESOURCE_ATTRIBUTES` with at least:\n\n"
-           "```\nrun.mode=automated,run.role=<coordinator|planner|developer|reviewer|…>,"
-           "run.user=<owner>,run.task=<ticket-id>,run.env=<local|ci|prod>\n```\n\n"
-           "Set it in the pod spec / launcher. See `components/observability/grafana-dashboards/CLAUDE-CODE-OTEL.md`.",
-           h=4)
-
-    b.row("Headline (automated)")
-    GREEN = {"mode": "absolute", "steps": [{"color": "green", "value": None},
-             {"color": "yellow", "value": 25}, {"color": "red", "value": 100}]}
-    b.stat("Cost", [{"expr": f"sum(max_over_time({sel(COST, A_FULL)}[$__range]))", "legend": "USD"}],
-           unit="currencyUSD", decimals=2, color="bgsolid", thresholds=GREEN)
-    b.stat("Tokens", [{"expr": f"sum(max_over_time({sel(TOK, A_FULL)}[$__range]))"}], unit="short", decimals=1)
-    b.stat("Agent sessions", [{"expr": f"sum(max_over_time({sel(SESS, A_BASE)}[$__range]))"}])
-    b.stat("Distinct roles", [{"expr": f'count(count by ("run.role") (max_over_time({sel(COST, A_FULL)}[$__range]))) or vector(0)'}])
-    b.stat("Avg cost / session",
-           [{"expr": f'sum(max_over_time({sel(COST, A_FULL)}[$__range])) / (count(count by ("session.id") (max_over_time({sel(COST, A_FULL)}[$__range]))) > 0)'}],
-           unit="currencyUSD", decimals=3, desc="Per distinct in-window session.")
-    b.stat("Active time", [{"expr": f"sum(max_over_time({sel(ACT, A_BASE)}[$__range]))"}], unit="s")
-
-    b.row("By role / task / user")
-    b.pie("Cost by role", [{"expr": f'sum by ("run.role") (max_over_time({sel(COST, A_FULL)}[$__range]))', "legend": "{{run.role}}"}],
-          w=8, unit="currencyUSD")
-    b.pie("Tokens by role", [{"expr": f'sum by ("run.role") (max_over_time({sel(TOK, A_FULL)}[$__range]))', "legend": "{{run.role}}"}], w=8)
-    b.timeseries("Cost over time by role",
-                 [{"expr": f'sum by ("run.role") (increase({sel(COST, A_FULL)}[$__interval]))', "legend": "{{run.role}}"}],
-                 w=8, unit="currencyUSD", draw="bars", fill=80, stack=True, decimals=4, legend_calcs=["mean", "max"], place="right")
-    b.bargauge("Cost by task", [{"expr": f'topk(15, sum by ("run.task") (max_over_time({sel(COST, A_FULL)}[$__range])))', "legend": "{{run.task}}"}],
-               w=12, unit="currencyUSD")
-    b.bargauge("Cost by user", [{"expr": f'topk(15, sum by ("run.user") (max_over_time({sel(COST, A_FULL)}[$__range])))', "legend": "{{run.user}}"}],
-               w=12, unit="currencyUSD")
-
-    b.row("Sessions & efficiency")
-    b.table("Top automated sessions",
-            [{"expr": f'topk(25, sum by ("session.id", "run.role", "run.task", "run.user") (max_over_time({sel(COST, A_FULL_NS)}[$__range])))',
-              "instant": True, "refId": "A"},
-             {"expr": f'sum by ("session.id", "run.role", "run.task", "run.user") (max_over_time({sel(TOK, A_FULL_NS)}[$__range])) and on ("session.id") topk(25, sum by ("session.id") (max_over_time({sel(COST, A_FULL_NS)}[$__range])))',
-              "instant": True, "refId": "B"}],
-            w=16, h=9,
-            rename={"session.id": "Session", "run.role": "Role", "run.task": "Task",
-                    "run.user": "User", "Value #A": "Cost ($)", "Value #B": "Tokens"},
-            units={"Cost ($)": "currencyUSD", "Tokens": "short"})
-    b.stat("Cache hit ratio",
-           [{"expr": f'sum(max_over_time({sel(TOK, A_FULL, CR)}[$__range])) / (sum(max_over_time({sel(TOK, A_FULL, CRCI)}[$__range])) > 0)'}],
-           w=4, h=9, unit="percentunit", decimals=1, color="background",
-           thresholds={"mode": "absolute", "steps": [{"color": "red", "value": None},
-                       {"color": "yellow", "value": 0.3}, {"color": "green", "value": 0.6}]})
-    b.pie("Cost by model", [{"expr": f"sum by (model) (max_over_time({sel(COST, A_FULL)}[$__range]))", "legend": "{{model}}"}], w=4, h=9, unit="currencyUSD")
-
-    b.row("Reliability (Loki)")
-    def lc(ev, extra=""):
-        return f'sum(count_over_time({L} | event_name="{ev}"{extra} [$__range])) or vector(0)'
-    b.stat("API errors", [{"expr": lc("api_error"), "loki": True}], color="background",
-           thresholds={"mode": "absolute", "steps": [{"color": "green", "value": None}, {"color": "red", "value": 1}]})
-    b.stat("API refusals", [{"expr": lc("api_refusal"), "loki": True}], color="background",
-           thresholds={"mode": "absolute", "steps": [{"color": "green", "value": None}, {"color": "orange", "value": 1}]})
-    b.stat("Retries exhausted", [{"expr": lc("api_retries_exhausted"), "loki": True}], color="background",
-           thresholds={"mode": "absolute", "steps": [{"color": "green", "value": None}, {"color": "red", "value": 1}]})
-    b.stat("Tool failure rate",
-           [{"expr": f'sum(count_over_time({L} | event_name="tool_result" | success="false" [$__range])) '
-                     f'/ (sum(count_over_time({L} | event_name="tool_result" [$__range])) > 0)', "loki": True}],
-           unit="percentunit", decimals=2, color="background",
-           thresholds={"mode": "absolute", "steps": [{"color": "green", "value": None},
-                       {"color": "yellow", "value": 0.05}, {"color": "red", "value": 0.15}]})
-    b.stat("Subagent completions", [{"expr": lc("subagent_completed"), "loki": True}])
-    b.timeseries("Errors & refusals over time",
-                 [{"expr": f'sum by (event_name) (count_over_time({L} | event_name=~"api_error|api_refusal|api_retries_exhausted" [$__auto]))',
-                   "legend": "{{event_name}}", "loki": True}],
-                 w=24, draw="bars", fill=70, stack=True, legend_calcs=["sum"], place="right")
-
-    variables = [
-        var_ds(), var_ds("loki", "loki", "Loki datasource"),
-        var_query("auser", "User", COST, '"run.user"'),
-        var_query("role", "Role", COST, '"run.role"'),
-        var_query("task", "Task", COST, '"run.task"', allvalue=".+"),
-        var_query("model", "Model", COST, "model"),
-        var_query("effort", "Effort", COST, "effort"),
-        var_query("team", "Team", COST, '"team.id"'),
-        var_query("env", "Env", COST, '"run.env"'),
-        var_query("session", "Session", COST, '"session.id"', allvalue=".+"),
-    ]
-    return dashboard("claude-code-automated", "Claude Code · Automated Agents", b.panels, variables,
-                     "Automated `claude -p` runs (pods/scripts), keyed on run.mode=automated. "
-                     "Segmented by run.role, run.task, run.user. Populates once automation sets "
-                     "OTEL_RESOURCE_ATTRIBUTES (see CLAUDE-CODE-OTEL.md).",
-                     ["claude-code", "observability", "ai", "automated"])
-
-
-# ===========================================================================
-# WORKFLOWS dashboard — multi-session workflows tagged with wf.id
-# ===========================================================================
-def build_workflows():
-    b = Builder()
-    # wf.id=~"$wf" with allValue ".+" restricts to series that actually have a wf.id
-    W_FULL = ['"wf.id"=~"$wf"', '"wf.step"=~"$step"', '"run.user"=~"$wuser"',
-              'model=~"$model"', 'effort=~"$effort"', '"team.id"=~"$team"',
-              '"run.env"=~"$env"', '"session.id"=~"$session"']
-    W_FULL_NS = [f for f in W_FULL if "session.id" not in f]
-    W_BASE = ['"wf.id"=~"$wf"', '"wf.step"=~"$step"', '"run.user"=~"$wuser"',
-              '"team.id"=~"$team"', '"run.env"=~"$env"', '"session.id"=~"$session"']
-    L = '{service_name=~"claude-code.*", session_id=~"$session"} | wf_id=~"$wf"'
-
-    b.text("Populating this dashboard",
-           "This view shows **workflow** runs — scripts that invoke Claude across multiple sessions, "
-           "tagged with a workflow id. It fills in once each session in a workflow sets "
-           "`OTEL_RESOURCE_ATTRIBUTES` with:\n\n"
-           "```\nrun.mode=workflow,wf.id=<wf_…>,wf.step=<plan|implement|review|…>,run.user=<owner>,run.env=<env>\n```\n\n"
-           "Use a stable `wf.id` for all sessions in one workflow run, and `wf.step` to mark the stage. "
-           "See `components/observability/grafana-dashboards/CLAUDE-CODE-OTEL.md`.",
-           h=4)
-
-    b.row("Headline (workflows)")
-    GREEN = {"mode": "absolute", "steps": [{"color": "green", "value": None},
-             {"color": "yellow", "value": 25}, {"color": "red", "value": 100}]}
-    b.stat("Workflow cost", [{"expr": f"sum(max_over_time({sel(COST, W_FULL)}[$__range]))", "legend": "USD"}],
-           unit="currencyUSD", decimals=2, color="bgsolid", thresholds=GREEN)
-    b.stat("Tokens", [{"expr": f"sum(max_over_time({sel(TOK, W_FULL)}[$__range]))"}], unit="short", decimals=1)
-    b.stat("Workflows", [{"expr": f'count(count by ("wf.id") (max_over_time({sel(COST, W_FULL)}[$__range]))) or vector(0)'}],
-           desc="Distinct wf.id values in range.")
-    b.stat("Avg cost / workflow",
-           [{"expr": f'sum(max_over_time({sel(COST, W_FULL)}[$__range])) / (count(count by ("wf.id") (max_over_time({sel(COST, W_FULL)}[$__range]))) > 0)'}],
-           unit="currencyUSD", decimals=3)
-    b.stat("Sessions", [{"expr": f"sum(max_over_time({sel(SESS, W_BASE)}[$__range]))"}])
-    b.stat("Active time", [{"expr": f"sum(max_over_time({sel(ACT, W_BASE)}[$__range]))"}], unit="s")
-
-    b.row("By workflow")
-    b.bargauge("Cost by workflow", [{"expr": f'topk(20, sum by ("wf.id") (max_over_time({sel(COST, W_FULL)}[$__range])))', "legend": "{{wf.id}}"}],
-               w=12, unit="currencyUSD")
-    b.bargauge("Tokens by workflow", [{"expr": f'topk(20, sum by ("wf.id") (max_over_time({sel(TOK, W_FULL)}[$__range])))', "legend": "{{wf.id}}"}],
-               w=12, unit="short")
-    b.timeseries("Cost over time by workflow",
-                 [{"expr": f'topk(15, sum by ("wf.id") (increase({sel(COST, W_FULL)}[$__interval])))', "legend": "{{wf.id}}"}],
-                 w=24, unit="currencyUSD", draw="bars", fill=80, stack=True, decimals=4, legend_calcs=["mean", "max"], place="right",
-                 desc="Top 15 workflows by cost in each interval.")
-    b.table("Per-workflow breakdown",
-            [{"expr": f'topk(20, sum by ("wf.id", "run.user") (max_over_time({sel(COST, W_FULL_NS)}[$__range])))', "instant": True, "refId": "A"},
-             {"expr": f'sum by ("wf.id", "run.user") (max_over_time({sel(TOK, W_FULL_NS)}[$__range])) and on ("wf.id") topk(20, sum by ("wf.id") (max_over_time({sel(COST, W_FULL_NS)}[$__range])))',
-              "instant": True, "refId": "B"}],
-            w=24, h=9,
-            rename={"wf.id": "Workflow", "run.user": "User", "Value #A": "Cost ($)", "Value #B": "Tokens"},
-            units={"Cost ($)": "currencyUSD", "Tokens": "short"})
-
-    b.row("By step")
-    b.pie("Cost by step", [{"expr": f'sum by ("wf.step") (max_over_time({sel(COST, W_FULL)}[$__range]))', "legend": "{{wf.step}}"}],
-          w=8, unit="currencyUSD")
-    b.pie("Tokens by step", [{"expr": f'sum by ("wf.step") (max_over_time({sel(TOK, W_FULL)}[$__range]))', "legend": "{{wf.step}}"}], w=8)
-    b.timeseries("Step cost over time",
-                 [{"expr": f'sum by ("wf.step") (increase({sel(COST, W_FULL)}[$__interval]))', "legend": "{{wf.step}}"}],
-                 w=8, unit="currencyUSD", draw="bars", fill=80, stack=True, decimals=4, legend_calcs=["mean", "max"], place="right")
-
-    b.row("Efficiency & reliability")
-    b.stat("Cache hit ratio",
-           [{"expr": f'sum(max_over_time({sel(TOK, W_FULL, CR)}[$__range])) / (sum(max_over_time({sel(TOK, W_FULL, CRCI)}[$__range])) > 0)'}],
-           w=6, unit="percentunit", decimals=1, color="background",
-           thresholds={"mode": "absolute", "steps": [{"color": "red", "value": None},
-                       {"color": "yellow", "value": 0.3}, {"color": "green", "value": 0.6}]})
-    b.pie("Cost by model", [{"expr": f"sum by (model) (max_over_time({sel(COST, W_FULL)}[$__range]))", "legend": "{{model}}"}], w=6, unit="currencyUSD")
-    b.stat("API errors", [{"expr": f'sum(count_over_time({L} | event_name="api_error" [$__range])) or vector(0)', "loki": True}],
-           w=6, color="background",
-           thresholds={"mode": "absolute", "steps": [{"color": "green", "value": None}, {"color": "red", "value": 1}]})
-    b.stat("API refusals", [{"expr": f'sum(count_over_time({L} | event_name="api_refusal" [$__range])) or vector(0)', "loki": True}],
-           w=6, color="background",
-           thresholds={"mode": "absolute", "steps": [{"color": "green", "value": None}, {"color": "orange", "value": 1}]})
-
-    variables = [
-        var_ds(), var_ds("loki", "loki", "Loki datasource"),
-        var_query("wf", "Workflow", COST, '"wf.id"', allvalue=".+"),
-        var_query("step", "Step", COST, '"wf.step"'),
-        var_query("wuser", "User", COST, '"run.user"'),
-        var_query("model", "Model", COST, "model"),
-        var_query("effort", "Effort", COST, "effort"),
-        var_query("team", "Team", COST, '"team.id"'),
-        var_query("env", "Env", COST, '"run.env"'),
-        var_query("session", "Session", COST, '"session.id"', allvalue=".+"),
-    ]
-    return dashboard("claude-code-workflows", "Claude Code · Workflows", b.panels, variables,
-                     "Multi-session workflow runs tagged with wf.id. Per-workflow and per-step cost, "
-                     "tokens, and reliability. Populates once workflow sessions set OTEL_RESOURCE_ATTRIBUTES "
-                     "(run.mode=workflow,wf.id=…,wf.step=…). See CLAUDE-CODE-OTEL.md.",
-                     ["claude-code", "observability", "ai", "workflow"])
-
-
-OUT = "/Users/enesanbar/workspace/gitops-flux/components/observability/grafana-dashboards"
-for name, d in [("claude-code-dashboard.json", build_overview()),
-                ("claude-code-automated.json", build_automated()),
-                ("claude-code-workflows.json", build_workflows())]:
-    path = f"{OUT}/{name}"
+OUT = os.path.dirname(os.path.abspath(__file__))
+for name, d in [("claude-code-dashboard.json", build_overview())]:
+    path = os.path.join(OUT, name)
     with open(path, "w") as f:
         json.dump(d, f, indent=2)
         f.write("\n")

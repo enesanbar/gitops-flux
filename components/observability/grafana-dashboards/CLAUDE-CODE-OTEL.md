@@ -1,7 +1,7 @@
-# Claude Code observability — attribute convention & dashboards
+# Claude Code observability — attribute convention & dashboard
 
-How Claude Code telemetry is tagged and which dashboard shows what. The
-dashboards are generated, not hand-edited — see [Regenerating](#regenerating).
+How Claude Code telemetry is tagged and how the Overview dashboard reads it. The
+dashboard is generated, not hand-edited — see [Regenerating](#regenerating).
 
 ## The pipeline (recap)
 
@@ -35,7 +35,7 @@ queryable label on every metric series, and structured metadata on every event.
 
 | Key | Values | Modes | Meaning |
 |-----|--------|-------|---------|
-| `run.mode` | `interactive` \| `automated` \| `workflow` | all | **Primary discriminator.** Which dashboard a series belongs to. |
+| `run.mode` | `interactive` \| `automated` \| `workflow` | all | **Primary discriminator.** Drives the dashboard's Mode filter and "Cost by mode" panel. |
 | `run.user` | e.g. `enes` | all | Human owner. (`user.email` is the auth identity; `run.user` is the person responsible for an automated/workflow run, which may differ.) |
 | `run.env` | `local` \| `ci` \| `prod` | all | Environment the run executed in. |
 | `team.id` | e.g. `cloud-ai` | all | Team / cost-centre. Drives the "Cost by team" panel. |
@@ -43,6 +43,10 @@ queryable label on every metric series, and structured metadata on every event.
 | `run.task` | ticket / task id | automated | What the agent is working on. |
 | `wf.id` | `wf_…` | workflow | Stable id shared by every session in one workflow run. |
 | `wf.step` | `plan` \| `implement` \| `review` \| … | workflow | The stage within the workflow. |
+
+The last four keys are not surfaced by the Overview dashboard (the dedicated
+Automated and Workflows dashboards were retired); they remain queryable as
+labels in Explore, so keep setting them.
 
 > **Formatting rules** (strict): comma-separated `key=value`, **no spaces**, no
 > quotes, no semicolons/backslashes. Percent-encode anything exotic. Wrapping in
@@ -95,18 +99,14 @@ without losing the resource block, set
 `OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES=false`. Never put unbounded values
 (uuids per request, free text) in `OTEL_RESOURCE_ATTRIBUTES`.
 
-## The dashboards (Grafana folder `claude-code`)
+## The dashboard (Grafana folder `claude-code`)
 
-| Dashboard | uid | Scope | Populated by |
-|-----------|-----|-------|--------------|
-| **Claude Code · Overview** | `claude-code-usage` | All modes — fleet cost, tokens (incl. cache), sessions, productivity, reliability events, latency. Filters: mode, user, model, effort, query source, team, env, session. | Live now. |
-| **Claude Code · Automated Agents** | `claude-code-automated` | `run.mode=automated` — cost/tokens by role, task, user; per-session table; error/refusal/retry rates. | Once pods set `run.mode=automated`. |
-| **Claude Code · Workflows** | `claude-code-workflows` | series with a `wf.id` — per-workflow & per-step cost/tokens, reliability. | Once workflow sessions set `wf.id`. |
+| Dashboard | uid | Scope |
+|-----------|-----|-------|
+| **Claude Code · Overview** | `claude-code-usage` | All modes — fleet cost, tokens (incl. cache), sessions, productivity, reliability events, latency. Filters: mode, user, model, effort, query source, team, env, session. |
 
-All three dashboards share the same filter set (mode/user/model/effort/team/env/session,
-plus mode-specific role/task/wf/step). Panels that read empty show a hint (e.g.
-"no team.id yet — set team.id=… in OTEL_RESOURCE_ATTRIBUTES"); they light up
-automatically once the attribute flows.
+Panels that read empty show a hint (e.g. "no team.id yet — set team.id=… in
+OTEL_RESOURCE_ATTRIBUTES"); they light up automatically once the attribute flows.
 
 ## How totals are aggregated (important)
 
@@ -155,12 +155,12 @@ These are fine on the dev cluster but worth doing before this fans out widely:
 
 ## Regenerating
 
-The JSON is built by `gen_dashboards.py` (next to the dashboards). `kustomize`
-only picks up the `.json` files, so the generator ships alongside them without
+The JSON is built by `gen_dashboards.py` (next to the dashboard). `kustomize`
+only picks up the `.json` file, so the generator ships alongside it without
 being rendered into the ConfigMap. It owns the shared filter-injection idiom
 (dotted OTel labels must be quoted in PromQL: `{"user.email"=~"$user"}`), panel
 layout, and unique ids. Edit the generator, re-run it, and it overwrites the
-three JSON files in place; `kustomize` re-renders them into the
+JSON in place; `kustomize` re-renders it into the
 `grafana-dashboard-claude-code` ConfigMap, which Grafana's sidecar reloads.
 
 ```bash
