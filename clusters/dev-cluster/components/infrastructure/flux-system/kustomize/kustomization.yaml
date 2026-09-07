@@ -33,7 +33,7 @@ resources:
 #- rabbitmq.yaml
 - redis.yaml
 - redis-insight.yaml
-- signoz.yaml
+#- signoz.yaml
 - tempo.yaml
 - tofu-controller.yaml
 - watchtower.yaml
