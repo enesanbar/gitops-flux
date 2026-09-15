@@ -1,0 +1,20 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: onyx
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: cnpg-system
+    - name: ingress-nginx
+    - name: cert-issuer
+  interval: 10m0s
+  retryInterval: 30s
+  timeout: 30m0s
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./clusters/dev-cluster/components/apps/onyx
+  prune: true
+  wait: true

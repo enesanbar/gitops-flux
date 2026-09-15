@@ -1,0 +1,63 @@
+# Replaces the chart's Ingress (hardcoded to a cert-manager issuer that does not exist here) and its
+# bundled nginx, whose job was the same split: /api to the api server with the prefix stripped,
+# everything else to the Next.js web server.
+#
+# Two objects because rewrite-target applies to every path in an Ingress. ingress-nginx merges them
+# into one server for the host. Only the web Ingress carries the issuer annotation, so cert-manager
+# makes a single Certificate; both name the same TLS secret so /api is served with it too.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: onyx
+  namespace: onyx
+  annotations:
+    cert-manager.io/cluster-issuer: mkcert-issuer
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: onyx.kindcluster.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: onyx-webserver
+                port:
+                  number: 3000
+  tls:
+    - hosts:
+        - onyx.kindcluster.dev
+      secretName: onyx-tls
+---
+# Annotations copied from the chart's templates/ingress-api.yaml: chat answers stream for minutes
+# and uploads can be large.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: onyx-api
+  namespace: onyx
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "900"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "900"
+    nginx.ingress.kubernetes.io/proxy-body-size: "5G"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: onyx.kindcluster.dev
+      http:
+        paths:
+          - path: /api(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: onyx-api-service
+                port:
+                  number: 8080
+  tls:
+    - hosts:
+        - onyx.kindcluster.dev
+      secretName: onyx-tls

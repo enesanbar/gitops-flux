@@ -1,0 +1,86 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: onyx
+  namespace: onyx
+spec:
+  values:
+    configMap:
+      # Rw service of the Cluster in postgres-cluster.yaml.
+      POSTGRES_HOST: onyx-pg-rw
+      WEB_DOMAIN: https://onyx.kindcluster.dev
+      DOMAIN: onyx.kindcluster.dev
+
+    opensearch:
+      persistence:
+        # <= the onyx-opensearch PV in pv.yaml. StatefulSet claim templates are
+        # immutable, so changing this later means deleting the STS and claim.
+        size: 20Gi
+      # k-NN vectors live off-heap: if bulk indexing gets OOMKilled, raise the
+      # memory limit, not the heap.
+      opensearchJavaOpts: "-Xms1g -Xmx1g"
+      resources:
+        requests: {cpu: 250m, memory: 2Gi}
+        limits: {cpu: "2", memory: 3Gi}
+
+    # ----- Dev sizing -----
+    # Chart defaults request ~10 CPU, sized for hundreds of users; this node has
+    # 10 in total. Requests are cut to what a single user needs to get scheduled,
+    # limits stay generous so indexing bursts are throttled rather than killed.
+    inferenceCapability:
+      resources:
+        requests: {cpu: 100m, memory: 1Gi}
+        limits: {cpu: "2", memory: 4Gi}
+    indexCapability:
+      resources:
+        requests: {cpu: 100m, memory: 1Gi}
+        limits: {cpu: "2", memory: 4Gi}
+    api:
+      resources:
+        requests: {cpu: 100m, memory: 768Mi}
+        limits: {cpu: "2", memory: 2Gi}
+    webserver:
+      resources:
+        requests: {cpu: 50m, memory: 256Mi}
+        limits: {cpu: "1", memory: 1Gi}
+    celery_beat:
+      resources:
+        requests: {cpu: 25m, memory: 256Mi}
+        limits: {cpu: "1", memory: 1Gi}
+    celery_worker_monitoring:
+      resources:
+        requests: {cpu: 25m, memory: 256Mi}
+        limits: {cpu: "1", memory: 2Gi}
+    celery_worker_primary:
+      resources:
+        requests: {cpu: 50m, memory: 512Mi}
+        limits: {cpu: "1", memory: 2Gi}
+    celery_worker_light:
+      resources:
+        requests: {cpu: 50m, memory: 384Mi}
+        limits: {cpu: "1", memory: 2Gi}
+    celery_worker_heavy:
+      resources:
+        requests: {cpu: 50m, memory: 384Mi}
+        limits: {cpu: "1", memory: 2Gi}
+    celery_worker_user_file_processing:
+      resources:
+        requests: {cpu: 50m, memory: 384Mi}
+        limits: {cpu: "1", memory: 2Gi}
+    celery_worker_docprocessing:
+      resources:
+        requests: {cpu: 50m, memory: 512Mi}
+        limits: {cpu: "1", memory: 3Gi}
+    celery_worker_docfetching:
+      resources:
+        requests: {cpu: 50m, memory: 512Mi}
+        limits: {cpu: "1", memory: 3Gi}
+    redis:
+      redisStandalone:
+        resources:
+          requests: {cpu: 25m, memory: 64Mi}
+          limits: {cpu: 500m, memory: 512Mi}
+    redis-operator:
+      resources:
+        requests: {cpu: 25m, memory: 64Mi}
+        limits: {cpu: 250m, memory: 256Mi}
