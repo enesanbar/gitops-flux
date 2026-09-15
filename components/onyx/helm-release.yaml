@@ -1,0 +1,91 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  # The chart derives every in-cluster hostname from the release name
+  # (onyx-api-service, onyx-webserver, the Redis service `onyx`), and the
+  # overlay's Ingress and Postgres host hardcode them: keep this `onyx`.
+  name: onyx
+  namespace: onyx
+spec:
+  interval: 1h
+  # First install pulls multi-GB backend and model-server images and waits for
+  # OpenSearch; the 5m default marks the release failed long before that.
+  timeout: 30m
+  chart:
+    spec:
+      chart: onyx
+      version: "0.8.25"
+      sourceRef:
+        kind: HelmRepository
+        name: onyx
+        namespace: flux-system
+  install:
+    # redis-operator subchart CRDs
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  values:
+    global:
+      # The chart defaults to `latest`, which with IfNotPresent never updates.
+      # Chart >= 0.7 needs the matching distroless model-server image, so bump
+      # both together.
+      version: v4.7.3
+
+    # The platform owns these; the bundled copies would collide with them.
+    #  - CNPG: a second operator fights cnpg-system over the cluster-scoped
+    #    postgresql.cnpg.io CRDs and webhooks. The Cluster comes from the overlay.
+    #  - nginx: a whole ingress-nginx controller with its own LoadBalancer.
+    #  - ingress: the chart hardcodes a cert-manager issuer it only creates with
+    #    letsencrypt.enabled, so the overlay brings its own Ingress.
+    postgresqlOperator:
+      enabled: false
+    postgresql:
+      enabled: false
+    nginx:
+      enabled: false
+    ingress:
+      enabled: false
+
+    # Files go to Postgres instead of MinIO: one less stateful service to run
+    # and persist.
+    minio:
+      enabled: false
+
+    slackbot:
+      enabled: false
+    codeInterpreter:
+      enabled: false
+    # Only guards upgrades from the 0.4.x Vespa-bundling charts.
+    legacyVespaCheck:
+      enabled: false
+    # Craft build-loop worker; nothing to do without Craft.
+    celery_worker_scheduled_tasks:
+      replicaCount: 0
+
+    redis:
+      redisStandalone:
+        redisSecret:
+          secretName: onyx-redis
+          secretKey: redis_password
+
+    # Every credential is an existingSecret: left empty, the chart renders a
+    # Secret of the same name with placeholder values over the real one.
+    auth:
+      postgresql:
+        existingSecret: onyx-postgresql
+      opensearch:
+        existingSecret: onyx-opensearch
+      redis:
+        existingSecret: onyx-redis
+      userauth:
+        enabled: true
+        existingSecret: onyx-userauth
+      objectstorage:
+        enabled: false
+
+    configMap:
+      FILE_STORE_BACKEND: postgres

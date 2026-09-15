@@ -18,11 +18,12 @@ A Flux CD GitOps repository: every change to Kubernetes state goes through Git, 
 # Bootstrap Flux against this repo (requires GITHUB_TOKEN env var; first run only)
 ./scripts/flux/bootstrap.sh kind-local-dind-cluster <github-user> gitops-flux main clusters/dev-cluster
 
-# Inspect / debug Flux reconciliation
-flux get kustomizations
-flux get helmreleases -A
-flux reconcile kustomization <name> --with-source     # force a re-sync
-flux logs --kind=Kustomization --name=<name> -f       # follow controller logs
+# Inspect / debug Flux reconciliation. Always pass the context: the machine's
+# default kubectl context is not guaranteed to be the kind cluster.
+flux --context kind-local-dind-cluster get kustomizations
+flux --context kind-local-dind-cluster get helmreleases -A
+flux --context kind-local-dind-cluster reconcile kustomization <name> --with-source   # force a re-sync
+flux --context kind-local-dind-cluster logs --kind=Kustomization --name=<name> -f     # follow controller logs
 
 # When editing a Kustomization locally, render it before committing
 kubectl kustomize clusters/dev-cluster
@@ -51,7 +52,7 @@ Per-cluster, components are partitioned:
 
 - `infrastructure/` — cluster-wide platform: ingress-nginx, cert-manager, metallb, metrics-server, monitoring stack, operators (postgres-operator, openclaw-operator, eck-operator), keycloak, redis, mongodb, etc.
 
-Two things in `components/monitoring/` are not Helm charts: `elasticsearch`, `kibana`, `logstash` and `filebeat` are ECK custom resources (the classic Elastic charts are EOL) managed by the `eck-operator` HelmRelease, so their Flux Kustomizations `dependsOn` it. Loki comes from the `grafana-community` HelmRepository, not `grafana` — the upstream chart went Enterprise-only at 7.x.
+Two things in `components/monitoring/` are not Helm charts: `elasticsearch`, `kibana`, `logstash` and `filebeat` are ECK custom resources (the classic Elastic charts are EOL) managed by the `eck-operator` HelmRelease. Only `elasticsearch` `dependsOn` it directly; the others chain through it (`kibana`/`logstash` → `elasticsearch`, `filebeat` → `logstash`). Loki comes from the `grafana-community` HelmRepository, not `grafana` — the upstream chart went Enterprise-only at 7.x.
 - `apps/` — workloads that depend on infrastructure: kubia, fleetman-microservices, openclaw instances, kubeclaw instances.
 
 There is no enforced ordering between the two; both reconcile in parallel. If an app needs an operator CRD, the app's Flux Kustomization will retry on its `retryInterval` until the CRD exists.
@@ -100,10 +101,11 @@ After recreating the cluster, re-run `install-mkcert-ca.sh` (bootstrap does it f
 
 ## Out-of-git secrets
 
-Two secrets are per-machine key material and never committed. Both are applied by `bootstrap.sh` and can be re-run standalone:
+These secrets are per-machine key material and never committed. All are applied by `bootstrap.sh` and can be re-run standalone:
 
 - `scripts/flux/install-mkcert-ca.sh` — the mkcert CA above.
 - `scripts/flux/install-n8n-secrets.sh` — `n8n/n8n-secrets` (`N8N_ENCRYPTION_KEY` and the public URL parts). The key file lives at `scripts/cluster-setup/kind/data-pool-1/n8n-encryption-key`, next to the database it encrypts, so a reinit never produces a key/data mismatch.
+- `scripts/flux/install-onyx-secrets.sh` — `onyx/onyx-{postgresql,opensearch,redis,userauth}`. Values live in `scripts/cluster-setup/kind/data-pool-1/onyx-secrets/` for the same reason: the Postgres superuser password must match adopted PGDATA, and OpenSearch fixes its admin password on first boot. Must run before Flux creates the `onyx-pg` CNPG Cluster.
 
 ## Adding a new component
 
@@ -122,7 +124,7 @@ Skipping any of steps 2-4 is the most common mistake — the manifests will sit 
 
 - **`clusters/dev-cluster/`** is the only fully-wired cluster. `prod-cluster/` is a stub that currently only references a couple of fleetman manifests; treat it as aspirational rather than functional.
 - The Flux bootstrap targets the dev cluster path by default; pass a different `clusters/<name>` path to bootstrap a different cluster.
-- The `kubeclaw-instances`, `openclaw-operator-instances`, and `openclaw-raw-instances` directories under `clusters/dev-cluster/components/apps/` are gitignored — they hold environment-specific generated instances and should not be committed.
+- The `kubeclaw-instances` and `openclaw-operator-instances` directories under `clusters/dev-cluster/components/apps/` are gitignored — they hold environment-specific generated instances (including Secrets) and should not be committed. Their tracked, Flux-registered counterparts live under `clusters/dev-cluster/components/infrastructure/`.
 
 ## ArgoCD script
 

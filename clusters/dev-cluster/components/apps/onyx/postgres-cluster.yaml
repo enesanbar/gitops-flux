@@ -1,0 +1,47 @@
+# Onyx's PostgreSQL, run by the platform CloudNativePG operator instead of the chart's bundled one
+# (see components/onyx/helm-release.yaml). Mirrors the chart's own templates/postgres-cluster.yaml
+# so Onyx runs the way upstream tests it: it connects as the `postgres` superuser to the `postgres`
+# database, because its migrations CREATE USER and CREATE EXTENSION (pgcrypto, pg_trgm).
+#
+# The superuser password comes from onyx-postgresql, created out of git by
+# scripts/flux/install-onyx-secrets.sh and kept next to the PGDATA it unlocks, so a rebuilt cluster
+# adopting the old volume presents the same password.
+#
+# Storage is the static onyx-pg-1 volume in pv.yaml. As with trellis, the name welds the template
+# to serial 1: a replacement instance would be onyx-pg-2 and Pend.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: onyx-pg
+  namespace: onyx
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  instances: 1
+  # The major the chart's bundled operator defaults to; the operator's own default moves with it.
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.7-standard-trixie
+  enableSuperuserAccess: true
+  superuserSecret:
+    name: onyx-postgresql
+  bootstrap:
+    initdb:
+      database: postgres
+      owner: postgres
+      secret:
+        name: onyx-postgresql
+  storage:
+    pvcTemplate:
+      volumeName: onyx-pg-1
+      storageClassName: standard
+      accessModes:
+        - ReadWriteOnce
+      volumeMode: Filesystem
+      resources:
+        requests:
+          storage: 10Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi

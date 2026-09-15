@@ -1,0 +1,59 @@
+# Static data-pool-1 volumes for Onyx's two stores. Each is pre-bound via claimRef to the exact
+# claim name its controller generates, so nothing is dynamically provisioned and the data outlives
+# the kind cluster. nodeAffinity on the PV steers the pods to the pool-1 node.
+---
+# PGDATA. The CloudNativePG operator names the claim <cluster>-<serial>; postgres-cluster.yaml's
+# pvcTemplate.volumeName points back here.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: onyx-pg-1
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  storageClassName: standard
+  persistentVolumeReclaimPolicy: Retain
+  accessModes: [ReadWriteOnce]
+  capacity:
+    storage: 10Gi
+  hostPath:
+    path: /mnt/data-pool-1/onyx-pg
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: gitops-flux.local/data-pool-1
+              operator: In
+              values: ["true"]
+  claimRef:
+    namespace: onyx
+    name: onyx-pg-1
+---
+# OpenSearch index. The StatefulSet's claim is <vct>-<sts>-0, both named after the chart's
+# clusterName-nodeGroup. Capacity must stay >= opensearch.persistence.size in helm-release.yaml.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: onyx-opensearch
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  storageClassName: standard
+  persistentVolumeReclaimPolicy: Retain
+  accessModes: [ReadWriteOnce]
+  capacity:
+    storage: 20Gi
+  hostPath:
+    path: /mnt/data-pool-1/onyx-opensearch
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: gitops-flux.local/data-pool-1
+              operator: In
+              values: ["true"]
+  claimRef:
+    namespace: onyx
+    name: onyx-opensearch-master-onyx-opensearch-master-0

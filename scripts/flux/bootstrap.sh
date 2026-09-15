@@ -22,6 +22,10 @@ kubectl config use-context "${KUBE_CONTEXT_NAME}"
 # next to the n8n data in data-pool-1 so reinits keep credentials readable.
 "${SCRIPT_DIR}/install-n8n-secrets.sh" "${KUBE_CONTEXT_NAME}"
 
+# Onyx's Postgres, OpenSearch, Redis and auth credentials. Kept in data-pool-1
+# beside the data they unlock; must exist before Flux creates the CNPG Cluster.
+"${SCRIPT_DIR}/install-onyx-secrets.sh" "${KUBE_CONTEXT_NAME}"
+
 # Install the flux components in the cluster
 flux bootstrap github \
   --owner="${GITHUB_USERNAME}" \
