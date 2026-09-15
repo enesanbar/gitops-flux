@@ -52,7 +52,7 @@ Per-cluster, components are partitioned:
 
 - `infrastructure/` — cluster-wide platform: ingress-nginx, cert-manager, metallb, metrics-server, monitoring stack, operators (postgres-operator, openclaw-operator, eck-operator), keycloak, redis, mongodb, etc.
 
-Two things in `components/monitoring/` are not Helm charts: `elasticsearch`, `kibana`, `logstash` and `filebeat` are ECK custom resources (the classic Elastic charts are EOL) managed by the `eck-operator` HelmRelease, so their Flux Kustomizations `dependsOn` it. Loki comes from the `grafana-community` HelmRepository, not `grafana` — the upstream chart went Enterprise-only at 7.x.
+Two things in `components/monitoring/` are not Helm charts: `elasticsearch`, `kibana`, `logstash` and `filebeat` are ECK custom resources (the classic Elastic charts are EOL) managed by the `eck-operator` HelmRelease. Only `elasticsearch` `dependsOn` it directly; the others chain through it (`kibana`/`logstash` → `elasticsearch`, `filebeat` → `logstash`). Loki comes from the `grafana-community` HelmRepository, not `grafana` — the upstream chart went Enterprise-only at 7.x.
 - `apps/` — workloads that depend on infrastructure: kubia, fleetman-microservices, openclaw instances, kubeclaw instances.
 
 There is no enforced ordering between the two; both reconcile in parallel. If an app needs an operator CRD, the app's Flux Kustomization will retry on its `retryInterval` until the CRD exists.
@@ -124,7 +124,7 @@ Skipping any of steps 2-4 is the most common mistake — the manifests will sit 
 
 - **`clusters/dev-cluster/`** is the only fully-wired cluster. `prod-cluster/` is a stub that currently only references a couple of fleetman manifests; treat it as aspirational rather than functional.
 - The Flux bootstrap targets the dev cluster path by default; pass a different `clusters/<name>` path to bootstrap a different cluster.
-- The `kubeclaw-instances`, `openclaw-operator-instances`, and `openclaw-raw-instances` directories under `clusters/dev-cluster/components/apps/` are gitignored — they hold environment-specific generated instances and should not be committed.
+- The `kubeclaw-instances` and `openclaw-operator-instances` directories under `clusters/dev-cluster/components/apps/` are gitignored — they hold environment-specific generated instances (including Secrets) and should not be committed. Their tracked, Flux-registered counterparts live under `clusters/dev-cluster/components/infrastructure/`.
 
 ## ArgoCD script
 
