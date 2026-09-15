@@ -122,6 +122,10 @@ spec:
           retry_on_failure:
             enabled: true
             max_elapsed_time: 5m
+        # NOT WIRED INTO PIPELINES while signoz is disabled in the Flux registry:
+        # exporting to a Service that no longer exists only fills the logs with
+        # "Exporting failed". Re-add it to the traces and logs exporters when
+        # signoz.yaml is re-enabled.
         otlp_grpc/signoz:
           endpoint: signoz-otel-collector.signoz.svc.cluster.local:4317
           tls:
@@ -202,7 +206,7 @@ spec:
           traces:
             receivers: [otlp]
             processors: [memory_limiter, k8s_attributes, batch]
-            exporters: [otlp_grpc/tempo, otlp_grpc/jaeger, otlp_grpc/signoz, debug]
+            exporters: [otlp_grpc/tempo, otlp_grpc/jaeger, debug]
           logs:
             receivers: [otlp]
             # groupbyattrs/session BEFORE batch so the resource grouping
@@ -211,10 +215,9 @@ spec:
             processors: [memory_limiter, k8s_attributes, groupbyattrs/session, batch]
             # elasticsearch/logs removed pending auth wiring — ELK still
             # ingests via filebeat. See comment on the exporter above.
-            # otlp_grpc/signoz handles logs too (SigNoz ingests OTLP traces +
-            # metrics + logs on the same port), so re-use the same exporter
-            # we already configured for traces.
-            exporters: [otlp_http/loki, otlp_grpc/signoz, debug]
+            # otlp_grpc/signoz (unwired while signoz is disabled) takes logs on
+            # the same port as traces when re-enabled.
+            exporters: [otlp_http/loki, debug]
           metrics:
             receivers: [otlp]
             processors: [memory_limiter, deltatocumulative, batch]
