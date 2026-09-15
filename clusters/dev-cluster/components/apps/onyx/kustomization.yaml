@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - ../../../../../components/onyx
   - pv.yaml
+  - pvc.yaml
   - postgres-cluster.yaml
   - ingress.yaml
 

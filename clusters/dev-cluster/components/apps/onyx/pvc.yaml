@@ -1,0 +1,32 @@
+# The operator's data claim for onyx-pg's first instance, declared here and marked ready so a
+# rebuilt kind cluster adopts the PGDATA retained on data-pool-1 instead of running initdb over it.
+# Same mechanism and caveats as clusters/dev-cluster/components/apps/trellis/pvc.yaml.
+#
+# First bootstrap on an empty pool: a ready claim has no PGDATA to start from, so land the Cluster
+# without this file first (initdb runs on the operator's own claim), then add this file; Flux
+# layers it onto the existing claim and it stays Ready. If this claim ever meets an empty pool,
+# recover with the procedure in the trellis file, substituting onyx/onyx-pg/onyx-pg-1.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: onyx-pg-1
+  namespace: onyx
+  labels:
+    cnpg.io/cluster: onyx-pg
+    cnpg.io/instanceName: onyx-pg-1
+    cnpg.io/instanceRole: primary
+    cnpg.io/pvcRole: PG_DATA
+    role: primary
+  annotations:
+    cnpg.io/nodeSerial: "1"
+    cnpg.io/pvcStatus: ready
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  volumeName: onyx-pg-1
+  storageClassName: standard
+  accessModes: [ReadWriteOnce]
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 10Gi
