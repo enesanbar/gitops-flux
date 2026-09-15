@@ -18,11 +18,12 @@ A Flux CD GitOps repository: every change to Kubernetes state goes through Git, 
 # Bootstrap Flux against this repo (requires GITHUB_TOKEN env var; first run only)
 ./scripts/flux/bootstrap.sh kind-local-dind-cluster <github-user> gitops-flux main clusters/dev-cluster
 
-# Inspect / debug Flux reconciliation
-flux get kustomizations
-flux get helmreleases -A
-flux reconcile kustomization <name> --with-source     # force a re-sync
-flux logs --kind=Kustomization --name=<name> -f       # follow controller logs
+# Inspect / debug Flux reconciliation. Always pass the context: the machine's
+# default kubectl context is not guaranteed to be the kind cluster.
+flux --context kind-local-dind-cluster get kustomizations
+flux --context kind-local-dind-cluster get helmreleases -A
+flux --context kind-local-dind-cluster reconcile kustomization <name> --with-source   # force a re-sync
+flux --context kind-local-dind-cluster logs --kind=Kustomization --name=<name> -f     # follow controller logs
 
 # When editing a Kustomization locally, render it before committing
 kubectl kustomize clusters/dev-cluster
