@@ -14,6 +14,7 @@ resources:
   - metrics-server.yaml
   - n8n.yaml
   - nccloud.yaml
+  - onyx.yaml
   - open-telemetry.yaml
   - prometheus-community.yaml
   - jetstack.yaml
