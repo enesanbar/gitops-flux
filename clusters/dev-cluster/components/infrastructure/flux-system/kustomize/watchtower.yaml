@@ -5,6 +5,8 @@ metadata:
   name: watchtower
   namespace: flux-system
 spec:
+  dependsOn:
+    - name: kube-prometheus-stack
   interval: 10m0s
   retryInterval: 30s
   timeout: 30m0s
