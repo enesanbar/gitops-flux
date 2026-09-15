@@ -1,2 +1,6 @@
 data-pool-*
 mkcert-ca-secret.yaml
+# Per-machine generated instances (with Secrets); the Flux-registered copies live under infrastructure/.
+/clusters/dev-cluster/components/apps/kubeclaw-instances/
+/clusters/dev-cluster/components/apps/openclaw-operator-instances/
+/clusters/dev-cluster/components/apps/openclaw-raw-instances/
