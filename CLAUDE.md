@@ -100,10 +100,11 @@ After recreating the cluster, re-run `install-mkcert-ca.sh` (bootstrap does it f
 
 ## Out-of-git secrets
 
-Two secrets are per-machine key material and never committed. Both are applied by `bootstrap.sh` and can be re-run standalone:
+These secrets are per-machine key material and never committed. All are applied by `bootstrap.sh` and can be re-run standalone:
 
 - `scripts/flux/install-mkcert-ca.sh` — the mkcert CA above.
 - `scripts/flux/install-n8n-secrets.sh` — `n8n/n8n-secrets` (`N8N_ENCRYPTION_KEY` and the public URL parts). The key file lives at `scripts/cluster-setup/kind/data-pool-1/n8n-encryption-key`, next to the database it encrypts, so a reinit never produces a key/data mismatch.
+- `scripts/flux/install-onyx-secrets.sh` — `onyx/onyx-{postgresql,opensearch,redis,userauth}`. Values live in `scripts/cluster-setup/kind/data-pool-1/onyx-secrets/` for the same reason: the Postgres superuser password must match adopted PGDATA, and OpenSearch fixes its admin password on first boot. Must run before Flux creates the `onyx-pg` CNPG Cluster.
 
 ## Adding a new component
 

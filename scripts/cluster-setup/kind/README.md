@@ -257,6 +257,9 @@ Convention: **pool-1 = application state, pool-2 = observability.** In the multi
 | 1 | `n8n-encryption-key` | — (file, not a PV) | read by `scripts/flux/install-n8n-secrets.sh` | — |
 | 1 | `keycloak-postgres-data` | `keycloak-postgres-data` | `keycloak/keycloak-postgres-data` | `components/keycloak/postgres-pvc.yaml` |
 | 1 | `trellis-pg` | `trellis-pg-1` | `trellis/trellis-pg-1` (the CloudNativePG operator's own claim, `<cluster>-<serial>`) | `clusters/dev-cluster/components/apps/trellis/pv.yaml` |
+| 1 | `onyx-pg` | `onyx-pg-1` | `onyx/onyx-pg-1` (CloudNativePG claim, declared ready like trellis) | `clusters/dev-cluster/components/apps/onyx/pv.yaml` |
+| 1 | `onyx-opensearch` | `onyx-opensearch` | `onyx/onyx-opensearch-master-onyx-opensearch-master-0` | `clusters/dev-cluster/components/apps/onyx/pv.yaml` |
+| 1 | `onyx-secrets` | — (files, not a PV) | read by `scripts/flux/install-onyx-secrets.sh` | — |
 | 2 | `monitoring-prometheus` | `monitoring-prometheus` | `monitoring/prometheus-kube-prometheus-stack-prometheus-db-prometheus-kube-prometheus-stack-prometheus-0` | `.../kube-prometheus-stack/pv.yaml` |
 | 2 | `monitoring-alertmanager` | `monitoring-alertmanager` | `monitoring/alertmanager-kube-prometheus-stack-alertmanager-db-alertmanager-kube-prometheus-stack-alertmanager-0` | `.../kube-prometheus-stack/pv.yaml` |
 | 2 | `monitoring-grafana` | `monitoring-grafana` | `monitoring/grafana` | `.../kube-prometheus-stack/pv.yaml` |
