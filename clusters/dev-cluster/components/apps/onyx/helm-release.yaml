@@ -10,6 +10,10 @@ spec:
       POSTGRES_HOST: onyx-pg-rw
       WEB_DOMAIN: https://onyx.kindcluster.dev
       DOMAIN: onyx.kindcluster.dev
+      # Onyx creates its chunk index with 1 replica, which a single OpenSearch
+      # node can never assign, so health sits at yellow. Read only when an index
+      # is created. Quoted: the chart drops values Sprig considers empty, and 0 is.
+      OPENSEARCH_INDEX_NUM_REPLICAS: "0"
 
     opensearch:
       persistence:
