@@ -48,6 +48,15 @@ spec:
       # RWO PVC + RollingUpdate deadlocks: the new pod can't mount until the old one lets go.
       deploymentStrategy:
         type: Recreate
+      # Grafana 13 ships Prometheus/Loki/Tempo/Jaeger as bundled plugins and, by
+      # default, auto-updates them from grafana.com on every start. On this
+      # read-only image the update unloads the running plugin, fails on the
+      # unlink, and never reloads it: the datasources vanish after each restart
+      # (grafana/grafana#132528). Plugin versions move with the image tag, not
+      # at runtime. Same fix the grafana chart adopted in 13.2.3.
+      grafana.ini:
+        plugins:
+          preinstall_auto_update: false
       # Dashboard ConfigMaps carry a `grafana_folder` annotation; the sidecar only
       # honours it with both of these set, otherwise everything lands in General.
       sidecar:
