@@ -15,8 +15,12 @@ spec:
     - name: default
       count: 1
       config:
-        # kind nodes inherit the host's vm.max_map_count, which is too low for mmapfs and not ours to
-        # raise. niofs is slower but boots without an init container.
+        # With mmap allowed, ES enforces vm.max_map_count >= 262144 at boot (1048576 recommended). That
+        # sysctl is not namespaced: every kind node reads the Docker Desktop VM's or Linux host's kernel
+        # value, and a pod can only raise it through a privileged init container. The upstream kernel
+        # default is 65530 (Docker Desktop 4.25 shipped that too), so niofs keeps ES booting on any host;
+        # the slower read path is noise for a single-node dev log sink.
+        # https://www.elastic.co/docs/deploy-manage/deploy/cloud-on-k8s/virtual-memory
         node.store.allow_mmap: false
       podTemplate:
         spec:
