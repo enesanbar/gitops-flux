@@ -1,0 +1,49 @@
+# pgAdmin's working directory: the config database (users, saved servers,
+# preferences, query history) plus the per-user storage dir. Pool-1 is the
+# application-state pool.
+#
+# The claimRef is load-bearing. `standard` is kind's local-path provisioner, so
+# without the pre-binding it would serve the claim with a dynamically
+# provisioned Delete volume and this pool directory would silently sit unused.
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pgadmin
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  storageClassName: standard
+  persistentVolumeReclaimPolicy: Retain
+  accessModes: [ReadWriteOnce]
+  capacity:
+    storage: 5Gi
+  hostPath:
+    path: /mnt/data-pool-1/pgadmin
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: gitops-flux.local/data-pool-1
+              operator: In
+              values: ["true"]
+  claimRef:
+    namespace: pgadmin
+    name: pgadmin
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pgadmin
+  namespace: pgadmin
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  volumeMode: Filesystem
+  volumeName: pgadmin
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: standard

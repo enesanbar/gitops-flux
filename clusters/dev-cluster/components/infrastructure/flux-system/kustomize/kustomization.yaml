@@ -30,6 +30,7 @@ resources:
 - openclaw-operator-instances.yaml
 - openclaw-raw-instances.yaml
 - opentelemetry-collector.yaml
+- pgadmin.yaml
 #- rabbitmq.yaml
 - redis.yaml
 - redis-insight.yaml

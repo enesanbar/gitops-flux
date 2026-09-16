@@ -1,0 +1,59 @@
+{
+  "_comment": [
+    "AUTHORITATIVE server inventory for pgAdmin on dev-cluster.",
+    "PGADMIN_REPLACE_SERVERS_ON_STARTUP=True means this file is re-imported with",
+    "--replace on every pod start, so servers added through the UI are dropped on",
+    "the next restart. Add a server by editing this file: the configMapGenerator",
+    "hash changes, the Deployment rolls, and the new list loads.",
+    "Passwords come from PasswordExecCommand against the pgadmin-db-passwords",
+    "Secret assembled by scripts/flux/install-pgadmin-secrets.sh, because",
+    "--replace drops the rows that saved passwords hang off.",
+    "sslmode prefer negotiates TLS with the CloudNativePG servers without",
+    "verifying it; verify-full would mean mounting each cluster's -ca Secret.",
+    "keycloak's Postgres serves no TLS at all."
+  ],
+  "Servers": {
+    "1": {
+      "Name": "onyx-pg (CNPG 17)",
+      "Group": "dev-cluster",
+      "Host": "onyx-pg-rw.onyx.svc.cluster.local",
+      "Port": 5432,
+      "Username": "postgres",
+      "MaintenanceDB": "postgres",
+      "Comment": "CloudNativePG, 1 instance. Connects as the superuser.",
+      "ConnectionParameters": {
+        "sslmode": "prefer",
+        "connect_timeout": 10
+      },
+      "PasswordExecCommand": "cat /pgpasswords/onyx-pg"
+    },
+    "2": {
+      "Name": "trellis-pg (CNPG 18)",
+      "Group": "dev-cluster",
+      "Host": "trellis-pg-rw.trellis.svc.cluster.local",
+      "Port": 5432,
+      "Username": "trellis",
+      "MaintenanceDB": "trellis",
+      "Comment": "CloudNativePG, 1 instance. No superuser secret exists; this is the app role that owns the database.",
+      "ConnectionParameters": {
+        "sslmode": "prefer",
+        "connect_timeout": 10
+      },
+      "PasswordExecCommand": "cat /pgpasswords/trellis-pg"
+    },
+    "3": {
+      "Name": "keycloak (plain 17)",
+      "Group": "dev-cluster",
+      "Host": "postgres.keycloak.svc.cluster.local",
+      "Port": 5432,
+      "Username": "keycloak",
+      "MaintenanceDB": "keycloak",
+      "Comment": "Plain Deployment, not operator-managed. No server TLS.",
+      "ConnectionParameters": {
+        "sslmode": "disable",
+        "connect_timeout": 10
+      },
+      "PasswordExecCommand": "cat /pgpasswords/keycloak"
+    }
+  }
+}
