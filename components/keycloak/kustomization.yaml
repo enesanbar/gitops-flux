@@ -8,6 +8,3 @@ resources:
   - keycloak-statafulset.yaml
   - keycloak-service.yaml
   - keycloak-ingress.yaml
-  - postgres-pgweb-deployment.yaml
-  - postgres-pgweb-service.yaml
-  - postgres-pgweb-ingress.yaml
