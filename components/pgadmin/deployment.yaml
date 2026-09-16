@@ -1,0 +1,154 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgadmin
+  namespace: pgadmin
+  labels:
+    app: pgadmin
+spec:
+  replicas: 1
+  # RWO volume, and upstream warns that a rolling update would briefly run two
+  # pgAdmin versions against one config database.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: pgadmin
+  template:
+    metadata:
+      labels:
+        app: pgadmin
+    spec:
+      automountServiceAccountToken: false
+      # The image declares USER 5050, so its entrypoint's own chown never runs.
+      securityContext:
+        runAsUser: 5050
+        runAsGroup: 5050
+        fsGroup: 5050
+      initContainers:
+        # Same pinned image as the main container: upstream requires anything
+        # touching /var/lib/pgadmin to be no newer than pgAdmin itself, and
+        # reusing it avoids a second pull. Shell form is required - in exec form
+        # `||` and `true` would become chown arguments.
+        #
+        # `|| true` because the data pools are virtiofs on macOS, where file
+        # ownership is squashed and chown can fail while being unnecessary. On
+        # Linux (or a multi-node kind) the chown is what makes the hostPath
+        # writable by uid 5050, since fsGroup does not apply to hostPath volumes.
+        - name: init-chown-data
+          image: dpage/pgadmin4:9.17
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - chown -R 5050:5050 /var/lib/pgadmin || true
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pgadmin
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+      containers:
+        - name: pgadmin
+          image: dpage/pgadmin4:9.17
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            # The image EXPOSEs 80/443, but binding below 1024 as uid 5050 relies
+            # on file capabilities the entrypoint drops under a restricted
+            # security context. 8080 sidesteps the question entirely.
+            - name: PGADMIN_LISTEN_PORT
+              value: "8080"
+            - name: PGADMIN_LISTEN_ADDRESS
+              value: "0.0.0.0"
+            - name: PGADMIN_DEFAULT_EMAIL
+              value: admin@kindcluster.dev
+            - name: PGADMIN_DEFAULT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pgadmin-auth
+                  key: password
+            # servers.json is authoritative and re-imported with --replace on
+            # every start. Without this variable the entrypoint only imports it
+            # when /var/lib/pgadmin/pgadmin4.db does not yet exist, which on an
+            # adopted pool volume means never.
+            - name: PGADMIN_SERVER_JSON_FILE
+              value: /servers/servers.json
+            - name: PGADMIN_REPLACE_SERVERS_ON_STARTUP
+              value: "True"
+            # --replace drops the server rows each boot, and saved passwords go
+            # with them, so the passwords have to come from outside the config
+            # database. config.py defaults this to False.
+            - name: PGADMIN_CONFIG_ENABLE_SERVER_PASS_EXEC_CMD
+              value: "True"
+            # Default is True, which prompts for a master password after every
+            # pod restart. Must be set before first boot: turning it off later
+            # deletes every saved password.
+            - name: PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED
+              value: "False"
+            # IP-bound session cookies break behind the ingress controller.
+            - name: PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION
+              value: "False"
+            - name: PGADMIN_CONFIG_UPGRADE_CHECK_ENABLED
+              value: "False"
+            - name: PGADMIN_DISABLE_POSTFIX
+              value: "True"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pgadmin
+            - name: servers
+              mountPath: /servers
+              readOnly: true
+            # Directory mount, never subPath: that is what lets kubelet refresh
+            # the files in place when install-pgadmin-secrets.sh is re-run.
+            - name: pgpasswords
+              mountPath: /pgpasswords
+              readOnly: true
+          startupProbe:
+            httpGet:
+              path: /misc/ping
+              port: http
+            periodSeconds: 10
+            failureThreshold: 18
+          readinessProbe:
+            httpGet:
+              path: /misc/ping
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /misc/ping
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pgadmin
+        - name: servers
+          configMap:
+            name: pgadmin-servers
+        - name: pgpasswords
+          secret:
+            secretName: pgadmin-db-passwords
+            # 0440, not 0400: secret volume files are root-owned and it is the
+            # fsGroup fixup that makes them readable by uid 5050, which needs a
+            # group bit to work with.
+            defaultMode: 0440
+            optional: true
