@@ -1,0 +1,22 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pgadmin
+  namespace: flux-system
+spec:
+  interval: 10m0s
+  retryInterval: 30s
+  timeout: 30m0s
+  # Only the ingress path. Deliberately not cnpg-system or any database:
+  # connections are lazy, so pgAdmin should come up even when every Postgres
+  # it points at is down.
+  dependsOn:
+    - name: ingress-nginx
+    - name: cert-issuer
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./clusters/dev-cluster/components/infrastructure/pgadmin
+  prune: true
+  wait: true

@@ -106,6 +106,7 @@ These secrets are per-machine key material and never committed. All are applied 
 - `scripts/flux/install-mkcert-ca.sh` — the mkcert CA above.
 - `scripts/flux/install-n8n-secrets.sh` — `n8n/n8n-secrets` (`N8N_ENCRYPTION_KEY` and the public URL parts). The key file lives at `scripts/cluster-setup/kind/data-pool-1/n8n-encryption-key`, next to the database it encrypts, so a reinit never produces a key/data mismatch.
 - `scripts/flux/install-onyx-secrets.sh` — `onyx/onyx-{postgresql,opensearch,redis,userauth}`. Values live in `scripts/cluster-setup/kind/data-pool-1/onyx-secrets/` for the same reason: the Postgres superuser password must match adopted PGDATA, and OpenSearch fixes its admin password on first boot. Must run before Flux creates the `onyx-pg` CNPG Cluster.
+- `scripts/flux/install-pgadmin-secrets.sh` — `pgadmin/pgadmin-auth` (the web login, generated once into `scripts/cluster-setup/kind/data-pool-1/pgadmin-secrets/` because it only creates the user on first boot) and `pgadmin/pgadmin-db-passwords`, copied out of the `onyx`, `trellis` and `keycloak` namespaces that own them. Skips anything not created yet, so re-run it once a new database exists; the Secret is mounted as a directory and refreshes without a pod restart.
 
 ## Adding a new component
 

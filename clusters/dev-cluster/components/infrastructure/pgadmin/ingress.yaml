@@ -1,0 +1,28 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pgadmin
+  namespace: pgadmin
+  annotations:
+    cert-manager.io/cluster-issuer: mkcert-issuer
+    # Long-running queries and SQL file imports through the Query Tool.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1G"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - pgadmin.kindcluster.dev
+      secretName: pgadmin-tls
+  rules:
+    - host: pgadmin.kindcluster.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: pgadmin
+                port:
+                  number: 80

@@ -26,6 +26,12 @@ kubectl config use-context "${KUBE_CONTEXT_NAME}"
 # beside the data they unlock; must exist before Flux creates the CNPG Cluster.
 "${SCRIPT_DIR}/install-onyx-secrets.sh" "${KUBE_CONTEXT_NAME}"
 
+# pgAdmin's web login, plus the per-database passwords it connects with, copied
+# out of the namespaces that own them. Safe to re-run: anything not created yet
+# is skipped, and the Secret is mounted as a directory so a later run refreshes
+# it without restarting the pod.
+"${SCRIPT_DIR}/install-pgadmin-secrets.sh" "${KUBE_CONTEXT_NAME}"
+
 # Install the flux components in the cluster
 flux bootstrap github \
   --owner="${GITHUB_USERNAME}" \

@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../../../components/pgadmin
+  - pv.yaml
+  - ingress.yaml
+
+# The hash suffix is the rollout trigger: editing servers.json renames the
+# ConfigMap, which changes the Deployment's volume reference, which rolls the
+# pod and re-imports the list. Do not disable it.
+configMapGenerator:
+  - name: pgadmin-servers
+    namespace: pgadmin
+    files:
+      - servers.json
