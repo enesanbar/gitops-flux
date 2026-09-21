@@ -268,7 +268,7 @@ kubectl --context kind-local-dind-cluster -n vault delete pod vault-0
 ./scripts/secrets/validate.sh
 ```
 
-Sealed readiness remains false while Vault is sealed; liveness tolerates sealing
+Vault readiness remains false while Vault is sealed; liveness tolerates sealing
 so it does not create a restart loop. Single-member Raft cannot tolerate loss of
 its sole data copy. Retained storage is not a backup:
 
@@ -292,6 +292,7 @@ To deliberately prove controller/key restoration without deleting the cluster:
 ```bash
 ./scripts/secrets/recover-sealed.sh --simulate-key-loss
 ./scripts/secrets/validate.sh
+./scripts/secrets/validate-auth.sh
 ```
 
 The drill backs up all keys, suspends reconciliation, stops the controller, removes

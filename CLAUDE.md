@@ -101,6 +101,14 @@ After recreating the cluster, re-run `install-mkcert-ca.sh` (bootstrap does it f
 
 ## Out-of-git secrets
 
+Secret-management experiments (Sealed Secrets, ESO, VSO and persistent Vault) are
+documented in `docs/secret-management/README.md`. Read that guide before touching
+their bootstrap or recovery state. Private custody lives in `.local/secret-management/dev-cluster/`
+(gitignored, **not mounted into kind**); Vault's encrypted Raft data lives on pool-1.
+`bootstrap.sh` restores the sealing keyring and public Vault CA trust before Flux.
+Vault needs manual unseal after restart. Never regenerate keys to bypass missing
+recovery material. `TASK-0669.02` is the later comparison, not this installation.
+
 These secrets are per-machine key material and never committed. All are applied by `bootstrap.sh` and can be re-run standalone:
 
 - `scripts/flux/install-mkcert-ca.sh` — the mkcert CA above.
