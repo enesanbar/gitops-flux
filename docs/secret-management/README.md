@@ -130,7 +130,7 @@ Vault. `vault.sh login` loads the password privately and saves a normal token.
 Re-run it when the token expires, then source `vault-env.sh` again. Alternatively
 use `vault.sh cli kv get secret-lab/eso/example` without exporting a token.
 
-For UI login choose **Username** / `userpass`, username **operator**. Retrieve the
+For UI login choose **Userpass**, mount `userpass`, username **operator**. Retrieve the
 password privately from `.local/secret-management/dev-cluster/vault/operator-password`
 using your editor/password manager. To use interactive `vault login` instead:
 
@@ -248,6 +248,8 @@ the nodes. Do not delete either directory when deleting the cluster.
 # Requires the existing GitHub bootstrap credential; restores CA and keyring first.
 ./scripts/flux/bootstrap.sh
 # Wait for the Vault container to be Running (sealed/unready is expected), then:
+kubectl --context kind-local-dind-cluster -n vault wait pod/vault-0 \
+  --for=jsonpath='{.status.phase}'=Running --timeout=10m
 ./scripts/secrets/vault.sh bootstrap
 ./scripts/secrets/vault.sh login
 ./scripts/secrets/validate.sh
@@ -328,3 +330,8 @@ remain trusted cluster controllers with Secret access. Production readiness also
 requires enforced network policy, Kubernetes etcd encryption, external identity,
 HA/custody and backup policy appropriate to that environment; those are outside
 this local preparation and are not a mechanism recommendation.
+
+Upstream references: [Sealed Secrets custom keys](https://github.com/bitnami/sealed-secrets/blob/main/docs/bring-your-own-certificates.md),
+[ESO Vault provider](https://external-secrets.io/latest/provider/hashicorp-vault/),
+[Vault Helm TLS](https://developer.hashicorp.com/vault/docs/deploy/kubernetes/helm/examples/ha-tls),
+[VSO API](https://developer.hashicorp.com/vault/docs/deploy/kubernetes/vso/api-reference).

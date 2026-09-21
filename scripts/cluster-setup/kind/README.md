@@ -1,5 +1,10 @@
 # Local Kubernetes Cluster (kind)
 
+For Sealed Secrets, ESO, VSO and persistent Vault, see the
+[secret-management operator guide](../../../docs/secret-management/README.md).
+Preserve `.local/secret-management/dev-cluster/` and `data-pool-1/vault-data`
+when recreating this cluster; run the documented restore/unseal sequence.
+
 Local Kubernetes cluster running via [kind](https://kind.sigs.k8s.io/), with custom domain access (`*.kindcluster.dev`) from your browser. Works on macOS (incl. Apple Silicon) and Linux (x86_64/arm64) — `start.sh` detects the OS and configures host DNS accordingly. Two topology profiles:
 
 | Profile | Containers | When to use |

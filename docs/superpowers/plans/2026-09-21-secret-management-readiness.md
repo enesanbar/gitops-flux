@@ -37,16 +37,16 @@ Review depth: independent before integration.
 ## Execution checklist
 
 - [x] Inspect repository, live cluster, shared backlog context and official charts.
-- [ ] Implement and behavior-test local custody helpers, restore and rotation.
-- [ ] Add hardened operator releases, Vault TLS/storage, dependency registration.
-- [ ] Add provider resources, scoped Vault policies/bootstrap and real examples.
-- [ ] Render all overlays/charts; review sensitive handling and recovery paths.
-- [ ] Commit/integrate GitOps changes and reconcile the local cluster.
-- [ ] Initialize/unseal Vault; verify non-root CLI/UI and operator auth.
-- [ ] Prove creation, updates and consumption for all three mechanisms.
-- [ ] Simulate controller/key loss; restore and decrypt old ciphertext.
-- [ ] Restart Vault/operators; prove recovery and metrics collection.
-- [ ] Write concise operator instructions and a factual validation record.
+- [x] Implement and behavior-test local custody helpers, restore and rotation.
+- [x] Add hardened operator releases, Vault TLS/storage, dependency registration.
+- [x] Add provider resources, scoped Vault policies/bootstrap and real examples.
+- [x] Render all overlays/charts; review sensitive handling and recovery paths.
+- [x] Commit/integrate GitOps changes and reconcile the local cluster.
+- [x] Initialize/unseal Vault; verify non-root CLI/UI and operator auth.
+- [x] Prove creation, updates and consumption for all three mechanisms.
+- [x] Simulate controller/key loss; restore and decrypt old ciphertext.
+- [x] Restart Vault/operators; prove recovery and metrics collection.
+- [x] Write concise operator instructions and a factual validation record.
 
 ## Verification commands
 

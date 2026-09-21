@@ -28,6 +28,17 @@ done
 "${SECRETS_SCRIPT_DIR}/vault.sh" cli token lookup -format=json | jq -e '.data.policies | (index("root") == null and index("secret-lab-operator") != null)' >/dev/null
 curl --fail --silent --show-error --cacert "${SECRET_STATE_DIR}/vault/ca.crt" https://vault.kindcluster.dev/ui/ | python3 -c 'import sys; s=sys.stdin.read(); assert "<html" in s.lower()'
 echo 'PASS Vault: non-root operator token and TLS-verified UI route'
+curl --fail --silent --show-error --cacert "${SECRET_STATE_DIR}/vault/ca.crt" \
+  'https://prometheus.kindcluster.dev/api/v1/targets?state=active' |
+  python3 -c '
+import json, sys
+targets = json.load(sys.stdin)["data"]["activeTargets"]
+namespaces = {"sealed-secrets", "external-secrets", "vault", "vault-secrets-operator"}
+selected = [t for t in targets if t["labels"].get("namespace") in namespaces]
+assert {t["labels"]["namespace"] for t in selected} == namespaces, "Missing metrics target"
+assert all(t["health"] == "up" for t in selected), "Unhealthy metrics target"
+print("PASS monitoring:", len(selected), "metrics targets healthy")
+'
 python3 - <<'PY'
 from pathlib import Path
 import os
