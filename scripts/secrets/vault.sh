@@ -17,9 +17,10 @@ test -s "$VAULT_CACERT" || { echo 'Run prepare-local.sh first.' >&2; exit 1; }
 python3 - <<'PY'
 import socket
 with socket.socket() as s:
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(('127.0.0.1', 18200))
 PY
-k -n vault port-forward --address=127.0.0.1 pod/vault-0 18200:8200 >"${VAULT_STATE}/port-forward.log" 2>&1 &
+kubectl --context "$KUBE_CONTEXT" -n vault port-forward --address=127.0.0.1 pod/vault-0 18200:8200 >"${VAULT_STATE}/port-forward.log" 2>&1 &
 FORWARD_PID=$!
 trap 'kill "$FORWARD_PID" 2>/dev/null || true; wait "$FORWARD_PID" 2>/dev/null || true' EXIT
 for attempt in {1..40}; do
