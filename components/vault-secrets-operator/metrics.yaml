@@ -1,0 +1,25 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: vso-metrics
+  namespace: vault-secrets-operator
+spec:
+  secretName: vso-metrics-tls
+  dnsNames:
+  - vault-secrets-operator-metrics-service.vault-secrets-operator.svc
+  issuerRef:
+    name: mkcert-issuer
+    kind: ClusterIssuer
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vso-prometheus-metrics
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: vault-secrets-operator-metrics-reader
+subjects:
+- kind: ServiceAccount
+  name: kube-prometheus-stack-prometheus
+  namespace: monitoring

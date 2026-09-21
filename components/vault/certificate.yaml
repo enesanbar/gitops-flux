@@ -1,0 +1,23 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: vault-server
+  namespace: vault
+spec:
+  secretName: vault-server-tls
+  duration: 2160h
+  renewBefore: 360h
+  privateKey:
+    rotationPolicy: Always
+  dnsNames:
+  - vault.kindcluster.dev
+  - vault
+  - vault.vault
+  - vault.vault.svc
+  - vault.vault.svc.cluster.local
+  - vault-0.vault-internal
+  - vault-0.vault-internal.vault.svc
+  - vault-active.vault.svc
+  issuerRef:
+    name: mkcert-issuer
+    kind: ClusterIssuer

@@ -39,3 +39,11 @@ resources:
 - tofu-controller.yaml
 - watchtower.yaml
 - weave-gitops.yaml
+- sealed-secrets.yaml
+- external-secrets.yaml
+- vault-secrets-operator.yaml
+- vault.yaml
+- secret-stores.yaml
+- secret-example-sealed.yaml
+- secret-example-eso.yaml
+- secret-example-vso.yaml

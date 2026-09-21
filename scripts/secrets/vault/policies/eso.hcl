@@ -1,0 +1,5 @@
+path "secret-lab/data/eso/*" { capabilities = ["read"] }
+path "secret-lab/metadata/eso/*" { capabilities = ["read", "list"] }
+path "auth/token/lookup-self" { capabilities = ["read"] }
+path "auth/token/renew-self" { capabilities = ["update"] }
+path "auth/token/revoke-self" { capabilities = ["update"] }

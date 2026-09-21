@@ -2,25 +2,27 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: flux-system
 resources:
-  - bitnami.yaml
-  - cloudnative-pg.yaml
-  - elastic.yaml
-  - grafana.yaml
-  - grafana-community.yaml
-  - headlamp.yaml
-  - ingress-nginx.yaml
-  - jaegertracing.yaml
-  - metallb.yaml
-  - metrics-server.yaml
-  - n8n.yaml
-  - nccloud.yaml
-  - onyx.yaml
-  - open-telemetry.yaml
-  - prometheus-community.yaml
-  - jetstack.yaml
-  - kubeclaw.yaml
-  - openclaw-operator.yaml
-  - sealed-secrets.yaml
-  - signoz.yaml
-  - tofu-controller.yaml
-  - ww-gitops.yaml
+- bitnami.yaml
+- cloudnative-pg.yaml
+- elastic.yaml
+- grafana.yaml
+- grafana-community.yaml
+- headlamp.yaml
+- ingress-nginx.yaml
+- jaegertracing.yaml
+- metallb.yaml
+- metrics-server.yaml
+- n8n.yaml
+- nccloud.yaml
+- onyx.yaml
+- open-telemetry.yaml
+- prometheus-community.yaml
+- jetstack.yaml
+- kubeclaw.yaml
+- openclaw-operator.yaml
+- sealed-secrets.yaml
+- signoz.yaml
+- tofu-controller.yaml
+- ww-gitops.yaml
+- external-secrets.yaml
+- hashicorp.yaml

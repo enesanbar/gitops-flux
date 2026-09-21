@@ -1,5 +1,13 @@
 data-pool-*
 mkcert-ca-secret.yaml
+# Host-only secret custody. This directory is deliberately NOT a kind mount.
+/.local/
+**/__pycache__/
+*.key
+*.pem
+!**/public-*.pem
+vault-init*.json
+sealed-secrets-keys*.json
 # Per-machine generated instances (with Secrets); the Flux-registered copies live under infrastructure/.
 /clusters/dev-cluster/components/apps/kubeclaw-instances/
 /clusters/dev-cluster/components/apps/openclaw-operator-instances/

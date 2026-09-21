@@ -18,6 +18,10 @@ kubectl config use-context "${KUBE_CONTEXT_NAME}"
 # standalone after recreating the cluster or rotating the CA.
 "${SCRIPT_DIR}/install-mkcert-ca.sh" "${KUBE_CONTEXT_NAME}"
 
+# Restore host-only sealing keys and the local Vault CA trust BEFORE Flux can
+# start the controllers. Missing custody material is a hard stop, not new keys.
+KUBE_CONTEXT="${KUBE_CONTEXT_NAME}" "${SCRIPT_DIR}/../secrets/prepare-local.sh"
+
 # n8n's encryption key + runtime Secret. Also kept out of git; the key lives
 # next to the n8n data in data-pool-1 so reinits keep credentials readable.
 "${SCRIPT_DIR}/install-n8n-secrets.sh" "${KUBE_CONTEXT_NAME}"
