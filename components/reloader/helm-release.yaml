@@ -1,6 +1,16 @@
 # Restart tooling under evaluation: restarts a Deployment when a Secret or ConfigMap it mounts or
 # references changes, so a rotated value reaches a process that only reads at start. Workloads opt in
 # with the reloader.stakater.com/auto annotation; nothing is restarted without it.
+#
+# TRUST BOUNDARY, measured 2026-09-22: this controller reads EVERY Secret in the cluster (its
+# ClusterRole holds secrets get/list/watch) and patches every Deployment, DaemonSet and StatefulSet.
+# That is the price of the capability, and on a tenant cluster it is the reason to scope it by
+# namespace rather than run it globally.
+#
+# reloadStrategy: the chart's default writes a fingerprint of the watched Secret's CONTENT into the
+# pod template as a STAKATER_<NAME>_SECRET environment variable, so a hash of key material (a KEK
+# included) becomes readable to anyone who can read a Deployment. `annotations` moves the trigger to
+# a pod-template annotation instead, which is why it is set here.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -27,6 +37,8 @@ spec:
   values:
     reloader:
       reloadOnCreate: false
+      reloadStrategy: annotations
+      namespaceSelector: kubernetes.io/metadata.name=trellis
       deployment:
         resources:
           requests:
