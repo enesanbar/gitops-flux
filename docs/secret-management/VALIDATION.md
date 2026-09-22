@@ -7,8 +7,8 @@ reseal/update exercise in **`e3cf814`**. No production cluster was changed.
 
 The initial cluster had no running Sealed Secrets, ESO, VSO or Vault installation.
 Sealed Secrets existed only as an unregistered old shared manifest; its chart URL
-returned 404. TASK-0669.02 was read for context in the shared Namecheap backlog;
-its evaluation, recommendation and status were not changed.
+returned 404. Nothing here chooses a mechanism: this validates the lab the
+experiments run on.
 
 ## Installed and exercised
 

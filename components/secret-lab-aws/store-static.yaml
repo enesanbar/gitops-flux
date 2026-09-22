@@ -1,4 +1,4 @@
-# The fleet's shape: a static access key held in a Kubernetes Secret. The Secret is created out of
+# The common shape: a static access key held in a Kubernetes Secret. The Secret is created out of
 # band from private custody; the IAM user behind it is scoped to one parameter prefix and one KMS key.
 apiVersion: external-secrets.io/v1
 kind: SecretStore
