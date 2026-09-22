@@ -1,0 +1,20 @@
+# The fleet's shape: a static access key held in a Kubernetes Secret. The Secret is created out of
+# band from private custody; the IAM user behind it is scoped to one parameter prefix and one KMS key.
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: aws-static
+  namespace: secret-lab-aws
+spec:
+  provider:
+    aws:
+      service: ParameterStore
+      region: REGION
+      auth:
+        secretRef:
+          accessKeyIDSecretRef:
+            name: aws-credentials
+            key: aws_access_key_id
+          secretAccessKeySecretRef:
+            name: aws-credentials
+            key: aws_secret_access_key

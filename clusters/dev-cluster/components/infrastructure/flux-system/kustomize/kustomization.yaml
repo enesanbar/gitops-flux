@@ -48,3 +48,4 @@ resources:
 - secret-example-eso.yaml
 - secret-example-vso.yaml
 - secret-lab-pki.yaml
+- secret-lab-aws.yaml

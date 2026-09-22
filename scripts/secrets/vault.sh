@@ -9,8 +9,8 @@ export VAULT_CACERT="${VAULT_STATE}/ca.crt"
 export VAULT_TLS_SERVER_NAME=vault.vault.svc
 unset VAULT_TOKEN VAULT_NAMESPACE VAULT_SKIP_VERIFY
 ACTION="${1:-}"; shift || true
-case "$ACTION" in bootstrap|unseal|login|cli|snapshot|tenant-auth|pki) ;; *)
-  echo 'Usage: vault.sh bootstrap|unseal|login|cli <vault args...>|snapshot|tenant-auth enable <kubeconfig> <api-url>|disable [<kubeconfig>]|pki' >&2; exit 2;; esac
+case "$ACTION" in bootstrap|unseal|login|cli|snapshot|tenant-auth|pki|aws) ;; *)
+  echo 'Usage: vault.sh bootstrap|unseal|login|cli <vault args...>|snapshot|tenant-auth enable <kubeconfig> <api-url>|disable [<kubeconfig>]|pki|aws' >&2; exit 2;; esac
 test -s "$VAULT_CACERT" || { echo 'Run prepare-local.sh first.' >&2; exit 1; }
 # Pod forwarding works even while sealed; the normal Service/UI stays unready.
 # Refuse an occupied port, rather than talking to an unknown existing forward.
@@ -158,6 +158,27 @@ case "$ACTION" in
     rm "${VAULT_STATE}/login.pending.json"
     echo 'Normal operator login saved (1h TTL, 4h maximum). Source scripts/secrets/vault-env.sh for the Vault CLI.' ;;
   cli) normal_token; vault "$@" ;;
+  aws)
+    # Experiment: Vault mints short-lived AWS credentials for ESO. Needs private custody written by
+    # aws-credentials.sh: aws/access_key_id, aws/secret_access_key (the scoped IAM user's key) and
+    # aws/config.json {"region": "...", "reader_role_arn": "arn:aws:iam::...:role/..."}. Root is used
+    # for mount, role and policy administration only; the key itself goes to Vault by file reference.
+    for f in aws/access_key_id aws/secret_access_key aws/config.json; do
+      test -s "${SECRET_STATE_DIR}/${f}" || { echo "Missing ${f} in private custody; run aws-credentials.sh first." >&2; exit 1; }
+    done
+    region="$(jq -r .region "${SECRET_STATE_DIR}/aws/config.json")"; role_arn="$(jq -r .reader_role_arn "${SECRET_STATE_DIR}/aws/config.json")"
+    export VAULT_TOKEN="$(jq -r '.root_token' "${VAULT_STATE}/init.json")"
+    vault secrets list -format=json | jq -e 'has("aws-lab/")' >/dev/null || vault secrets enable -path=aws-lab aws
+    vault write aws-lab/config/root "access_key=@${SECRET_STATE_DIR}/aws/access_key_id" \
+      "secret_key=@${SECRET_STATE_DIR}/aws/secret_access_key" "region=${region}" >/dev/null
+    vault write aws-lab/config/lease lease=1h lease_max=1h >/dev/null
+    vault write aws-lab/roles/eso-reader credential_type=assumed_role "role_arns=${role_arn}" default_sts_ttl=1h max_sts_ttl=1h >/dev/null
+    vault policy write secret-lab-aws-eso "${SECRETS_SCRIPT_DIR}/vault/policies/aws-eso.hcl" >/dev/null
+    vault write auth/kubernetes/role/aws-eso bound_service_account_names=vault-auth \
+      bound_service_account_namespaces=secret-lab-aws audience=vault token_policies=secret-lab-aws-eso \
+      token_no_default_policy=true token_ttl=10m token_max_ttl=1h >/dev/null
+    unset VAULT_TOKEN
+    echo 'Lab AWS secrets engine ready: mount aws-lab, role eso-reader (assumed_role), Kubernetes-auth role aws-eso.' ;;
   pki)
     # Experiment: in-cluster issuance. A lab-only PKI mount with an internal root; two policies let
     # ESO's generator and cert-manager's Vault issuer request leaf certificates and nothing else.

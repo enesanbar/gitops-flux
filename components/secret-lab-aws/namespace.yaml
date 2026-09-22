@@ -1,0 +1,43 @@
+# Parameter Store experiments: a static access key beside Vault-minted STS credentials.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: secret-lab-aws
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault-auth
+  namespace: secret-lab-aws
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: eso-vault-token
+  namespace: secret-lab-aws
+rules:
+- apiGroups: ['']
+  resources: [serviceaccounts/token]
+  resourceNames: [vault-auth]
+  verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: eso-vault-token
+  namespace: secret-lab-aws
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: eso-vault-token
+subjects:
+- kind: ServiceAccount
+  name: external-secrets
+  namespace: external-secrets

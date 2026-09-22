@@ -1,0 +1,76 @@
+# The combination: Vault's AWS secrets engine (mount aws-lab, role eso-reader, assumed_role) mints
+# STS credentials for a read-only IAM role; the generator lands them in a Secret; the SecretStore
+# authenticates with that Secret. Refresh must stay inside the STS lifetime (1h here, refreshed at 30m).
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: VaultDynamicSecret
+metadata:
+  name: aws-sts
+  namespace: secret-lab-aws
+spec:
+  path: aws-lab/sts/eso-reader
+  method: POST
+  parameters:
+    ttl: 3600
+  resultType: Data
+  provider:
+    server: https://vault.vault.svc:8200
+    caProvider:
+      type: ConfigMap
+      name: vault-ca
+      key: ca.crt
+      namespace: secret-lab-aws
+    auth:
+      kubernetes:
+        mountPath: kubernetes
+        role: aws-eso
+        serviceAccountRef:
+          name: vault-auth
+          audiences:
+          - vault
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: aws-sts-credentials
+  namespace: secret-lab-aws
+spec:
+  refreshPolicy: Periodic
+  refreshInterval: 30m
+  target:
+    name: aws-sts-credentials
+    creationPolicy: Owner
+    deletionPolicy: Delete
+    template:
+      engineVersion: v2
+      data:
+        aws_access_key_id: '{{ .access_key }}'
+        aws_secret_access_key: '{{ .secret_key }}'
+        aws_session_token: '{{ .security_token }}'
+  dataFrom:
+  - sourceRef:
+      generatorRef:
+        apiVersion: generators.external-secrets.io/v1alpha1
+        kind: VaultDynamicSecret
+        name: aws-sts
+---
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: aws-vault-minted
+  namespace: secret-lab-aws
+spec:
+  provider:
+    aws:
+      service: ParameterStore
+      region: REGION
+      auth:
+        secretRef:
+          accessKeyIDSecretRef:
+            name: aws-sts-credentials
+            key: aws_access_key_id
+          secretAccessKeySecretRef:
+            name: aws-sts-credentials
+            key: aws_secret_access_key
+          sessionTokenSecretRef:
+            name: aws-sts-credentials
+            key: aws_session_token
