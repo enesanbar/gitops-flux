@@ -14,4 +14,4 @@ echo "-- Reloader's own trace on the Deployment:"; $K -n trellis get deploy trel
 echo "-- rollback the value (this triggers a second restart, the cost of the tool)"; T0=$(date -u +%s); "$V" cli kv rollback -mount=secret-lab -version=1 trellis/llm | grep -E '^version' | sed 's/^/   /'; gen1=$($K -n trellis get deploy trellis-api -o jsonpath='{.metadata.generation}')
 echo "[wait began $(el)] rollback bumped the Deployment again -> generation $(waitfor 180 "$K -n trellis get deploy trellis-api -o jsonpath='{.metadata.generation}'" $((gen1+1)))"
 $K -n trellis rollout status deploy/trellis-api --timeout=240s >/dev/null 2>&1; echo "$(el) after rollback: process llm-key len=$($K -n trellis exec deploy/trellis-api -c api -- sh -c 'echo ${#TRELLIS_LLM_API_KEY}' 2>/dev/null) ready=$(ready)"
-echo "R15 end=$(now) (annotations left in place for GW.6's judgement; remove with kubectl annotate ... reloader.stakater.com/auto-)"
+echo "R15 end=$(now) (annotations left in place; remove with kubectl annotate ... reloader.stakater.com/auto-)"

@@ -39,6 +39,16 @@ esr() { kp -n "$1" get externalsecret "$2" -o jsonpath='{.status.conditions[0].r
 keys() { kp -n "$1" get secret "$2" -o go-template='{{range $k,$v := .data}}{{$k}}({{len $v}}) {{end}}' 2>/dev/null; }
 sync() { kp -n "$1" annotate externalsecret "$2" force-sync="$(date +%s%N)" --overwrite >/dev/null; }
 refreshed() { kp -n "$1" get externalsecret "$2" -o jsonpath='{.status.refreshTime}' 2>/dev/null; }
+# <reference store file> <role in it> <role to use>: the store with only its auth mount and role
+# changed, printed with the diff that proves nothing else moved (two lines out, two in).
+adapt_store() {
+  local out; out=$(sed -e 's|mountPath: kubernetes$|mountPath: kubernetes-tenant|' -e "s|role: $2\$|role: $3|" "$1")
+  local changed; changed=$(diff "$1" <(printf '%s\n' "$out") | grep -c '^[<>]')
+  [ "$changed" = 4 ] || { echo "adapting $1 changed ${changed} lines, not 4; refusing to call it the reference" >&2; return 1; }
+  echo "--- $(basename "$1"), adapted for this cluster (asserted: only these lines differ) ---" >&2
+  diff "$1" <(printf '%s\n' "$out") >&2 || true
+  printf '%s\n' "$out"
+}
 can_mint() { kp auth can-i create "serviceaccounts${2:+/$2}" --subresource=token -n "$1" \
   --as=system:serviceaccount:external-secrets:external-secrets 2>/dev/null || true; }
 
@@ -46,7 +56,11 @@ up() {
   mkdir -p "$STATE"
   # The three tenant auth mounts belong to the tenant-auth experiment. Repointing them at this
   # throwaway would silently break that experiment, and disabling them afterwards would destroy it.
-  if vsh cli auth list -format=json 2>/dev/null | jq -e 'has("kubernetes-tenant/") or has("jwt-tenant/") or has("jwt-tenant-static/")' >/dev/null; then
+  # Fail closed: an expired operator login makes the listing fail, and treating that as "no mounts"
+  # would let tenant-auth enable repoint an experiment's live mounts as root.
+  local mounts
+  mounts=$(vsh cli auth list -format=json 2>/dev/null) || { echo "Cannot list Vault auth mounts; run 'vault.sh login' first." >&2; exit 1; }
+  if jq -e 'has("kubernetes-tenant/") or has("jwt-tenant/") or has("jwt-tenant-static/")' <<<"$mounts" >/dev/null; then
     echo "The tenant auth mounts are already enabled (the tenant-auth experiment owns them)." >&2
     echo "Finish that experiment and run 'vault.sh tenant-auth disable' first." >&2; exit 1
   fi
@@ -108,8 +122,10 @@ YAML
     --dry-run=client -o yaml | kp apply -f - >/dev/null
 
   echo "[$(el)] tenant auth mounts and the parity roles on the lab Vault"
-  vsh tenant-auth enable "$KCFG" "https://${node_ip}:6443"
+  # The marker goes first: the mounts did not exist a moment ago, so from here on they are this run's
+  # to remove, including after a partial enable.
   touch "${STATE}/created-tenant-auth"
+  vsh tenant-auth enable "$KCFG" "https://${node_ip}:6443"
   vsh parity enable
 
   local ca="${STATE}/vault-ca.crt"
@@ -119,27 +135,26 @@ YAML
   kp get ns trellis >/dev/null 2>&1 || kp create namespace trellis >/dev/null
   kp -n trellis create configmap vault-ca --from-file=ca.crt="$ca" --dry-run=client -o yaml | kp apply -f - >/dev/null
   kp apply --validate=strict -f "${REPO}/components/trellis-secrets/rbac.yaml" >/dev/null
-  kp apply --validate=strict -f "${HERE}/parity-store.yaml" >/dev/null
+  # The reference store with exactly two lines changed, both forced by the cluster boundary rather
+  # than the operator version: this Vault reviews the throwaway's tokens through a second mount, and
+  # the role is bound to the throwaway's ServiceAccount. Generated, not copied, and asserted.
+  adapt_store "${REPO}/components/trellis-secrets/secret-store.yaml" trellis parity > "${STATE}/reference-store.yaml"
+  kp apply --validate=strict -f "${STATE}/reference-store.yaml" >/dev/null
   kp apply --validate=strict -f "${REPO}/components/trellis-secrets/external-secrets.yaml" >/dev/null
-  echo "--- reference SecretStore, as adapted for this cluster (the only change) ---"
-  diff -u "${REPO}/components/trellis-secrets/secret-store.yaml" "${HERE}/parity-store.yaml" || true
 
   echo "[$(el)] provisioning secret-lab-eso for the behaviour checks, identity copied from components/secret-stores/"
   yq -y 'select(.metadata.namespace=="secret-lab-eso" or .metadata.name=="secret-lab-eso")' \
     "${REPO}/components/secret-stores/namespaces.yaml" | kp apply --validate=strict -f - >/dev/null
   kp -n secret-lab-eso create configmap vault-ca --from-file=ca.crt="$ca" --dry-run=client -o yaml | kp apply -f - >/dev/null
-  sed -e 's|mountPath: kubernetes$|mountPath: kubernetes-tenant|' -e 's|role: eso$|role: parity-behaviour|' \
-    "${REPO}/components/secret-stores/eso-vault.yaml" | kp apply --validate=strict -f - >/dev/null
-  echo "--- behaviour SecretStore, as adapted for this cluster ---"
-  diff -u "${REPO}/components/secret-stores/eso-vault.yaml" \
-    <(sed -e 's|mountPath: kubernetes$|mountPath: kubernetes-tenant|' -e 's|role: eso$|role: parity-behaviour|' \
-      "${REPO}/components/secret-stores/eso-vault.yaml") || true
+  adapt_store "${REPO}/components/secret-stores/eso-vault.yaml" eso parity-behaviour | kp apply --validate=strict -f - >/dev/null
 
   echo "[$(el)] reference set on ${ESO_VERSION}"
   local n
   for n in trellis-secrets trellis-tls-eso; do
-    echo "   ${n}: $(waitfor 180 "esr trellis ${n}" SecretSynced) type=$(kp -n trellis get secret "$n" -o jsonpath='{.type}') keys=$(keys trellis "$n")"
+    r=$(waitfor 180 "esr trellis ${n}" SecretSynced) || { echo "   ${n}: ${r} - the reference does not sync here" >&2; exit 1; }
+    echo "   ${n}: ${r} type=$(kp -n trellis get secret "$n" -o jsonpath='{.type}') keys=$(keys trellis "$n")"
   done
+  echo "   the replayed ExternalSecrets are components/trellis-secrets/external-secrets.yaml at $(git -C "$REPO" rev-parse --short HEAD)$(git -C "$REPO" diff --quiet -- components/trellis-secrets || echo ' PLUS UNCOMMITTED CHANGES')"
   UP_DONE=1
   echo "[$(el)] up complete; next: parity-checks.sh against both clusters, then remedy, then down"
 }

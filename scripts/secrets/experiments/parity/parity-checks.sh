@@ -67,10 +67,16 @@ echo "   target: ${TARGET[*]}   namespace: ${NS}   backend subtree: secret-lab/$
 echo "   operator: $(kx -n external-secrets get deploy external-secrets -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo ERR)"
 echo "   ExternalSecret CRD versions: $(kx get crd externalsecrets.external-secrets.io -o jsonpath='{range .spec.versions[*]}{.name}(served={.served}) {end}' 2>/dev/null || echo ERR)"
 
-echo "-- OBSERVED, not pass/fail: how far the operator's token-minting reaches"
-echo "   any ServiceAccount in kube-system:  $(can_mint kube-system)"
-echo "   ${NS}/vault-auth (the store's own): $(can_mint "$NS" vault-auth)"
-echo "   ${NS}/default (not granted by the Role): $(can_mint "$NS" default)"
+echo "-- R least-privilege token minting (CONVENTIONS section 2): the operator may request a token only"
+echo "   for the ServiceAccounts its namespaced Roles name"
+expect "request a token for any ServiceAccount in kube-system" "$(can_mint kube-system)" no
+expect "request a token for ${NS}/vault-auth, the store's own" "$(can_mint "$NS" vault-auth)" yes
+expect "request a token for ${NS}/default, which no Role names" "$(can_mint "$NS" default)" no
+# Why a PASS above is hygiene and not a bound: the operator must write Secrets wherever it delivers,
+# and a kubernetes.io/service-account-token Secret it creates is filled in by the token controller.
+secret_reach() { local out; out=$(kx auth can-i "$1" secrets -n kube-system --as=system:serviceaccount:external-secrets:external-secrets 2>/dev/null)
+  case "$out" in yes|no) echo "$out" ;; *) echo ERR ;; esac; }
+echo "   OBSERVED: the operator may create Secrets in kube-system: $(secret_reach create), read them: $(secret_reach get)"
 
 echo "-- seeding secret-lab/${PREFIX}/* and applying the behaviour set with strict validation"
 CA_TMP=$(mktemp); kubectl --context "$LAB_CONTEXT" -n "$NS" get cm vault-ca -o jsonpath='{.data.ca\.crt}' > "$CA_TMP"
@@ -81,11 +87,11 @@ jq -n --rawfile crt "$CA_TMP" --rawfile key <(openssl genrsa 2048 2>/dev/null) '
 rnd 16 | put1 doomed VALUE
 for f in a b c; do rnd 12 | put1 "found/${f}" V; done
 if sed -e "s/__NS__/${NS}/g" -e "s|__PREFIX__|${PREFIX}|g" "${HERE}/parity-behaviour.yaml" | kx apply --validate=strict -f - >/dev/null; then
-  pass "all seven ExternalSecrets accepted under --validate=strict (remoteRef.version included)"
+  pass "all eight ExternalSecrets accepted under --validate=strict (remoteRef.version included)"
 else fail "strict apply rejected the behaviour set"; fi
 
 echo "-- P0 every object syncs"
-for n in p-explicit p-pinned p-extract p-typed-tls p-createdonce p-delete-policy p-find; do
+for n in p-explicit p-pinned p-extract p-typed-tls p-createdonce p-periodic-slow p-delete-policy p-find; do
   r=$(waitfor 180 "esr ${n}" SecretSynced) && pass "${n} ${r}" || fail "${n} ${r} msg=$(esmsg "$n")"
 done
 
@@ -97,14 +103,20 @@ expect "p-typed-tls type" "$(stype p-typed-tls)" "kubernetes.io/tls"
 expect "p-explicit owner (creationPolicy Owner)" "$(owner p-explicit)" "ExternalSecret/p-explicit"
 
 echo "-- P2 a new version of the key: Periodic follows; a pinned version and CreatedOnce do not"
-b_explicit=$(digest p-explicit KEK); b_pinned=$(digest p-pinned KEK); b_once=$(digest p-createdonce KEK)
-echo "   digests before: explicit=${b_explicit} pinned=${b_pinned} createdonce=${b_once}"
+b_explicit=$(digest p-explicit KEK); b_pinned=$(digest p-pinned KEK); b_once=$(digest p-createdonce KEK); b_slow=$(digest p-periodic-slow KEK)
+echo "   digests before: explicit=${b_explicit} pinned=${b_pinned} createdonce=${b_once} periodic-slow=${b_slow}"
 rnd 32 | put1 kek KEK; began=$(el); echo "   wrote kek v2 at ${began}"
 r=$(waitchange 120 'digest p-explicit KEK' "$b_explicit") && pass "p-explicit followed: ${r} [write ${began}]" || fail "p-explicit did not follow: ${r}"
 sleep 45   # at least one more 30s refresh for everything else
 expect "p-pinned KEK after two refreshes (version pinned to 1)" "$(digest p-pinned KEK)" "$b_pinned"
 expect "p-pinned still healthy" "$(esr p-pinned)" "SecretSynced"
-expect "p-createdonce KEK after two refreshes" "$(digest p-createdonce KEK)" "$b_once"
+# Force both a CreatedOnce object and its Periodic twin on the same effective interval: the twin
+# following is what shows the forced sync was real, so the CreatedOnce result means something.
+for n in p-createdonce p-periodic-slow; do kx -n "$NS" annotate externalsecret "$n" force-sync="$(date +%s)" --overwrite >/dev/null; done
+began=$(el)
+r=$(waitchange 60 'digest p-periodic-slow KEK' "$b_slow") && pass "control: p-periodic-slow followed the forced sync: ${r} [sync ${began}]" \
+  || fail "control: the forced sync did not reach p-periodic-slow (${r}), so the CreatedOnce check below proves nothing"
+expect "p-createdonce KEK after the same forced sync" "$(digest p-createdonce KEK)" "$b_once"
 
 echo "-- P3 the pin is per key: the same Secret's other key still refreshes"
 b_token=$(digest p-pinned SERVICE_TOKEN)

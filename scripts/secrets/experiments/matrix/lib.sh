@@ -1,4 +1,4 @@
-# shared helpers for the GW.5 rows (sourced); prints names, lengths, statuses and timings only
+# shared helpers for the matrix rows (sourced); prints names, lengths, statuses and timings only
 set +x; set -uo pipefail
 W="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 : "${SECRET_STATE_DIR:?export SECRET_STATE_DIR to the private custody directory}"
