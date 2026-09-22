@@ -90,7 +90,10 @@ endpoints: [{addresses: ["${lab_ip}"], conditions: {ready: true}}]
 YAML
 
   echo "[$(el)] installing external-secrets ${ESO_VERSION} with the lab's values"
-  helm --kubeconfig "$KCFG" upgrade --install external-secrets external-secrets \
+  # Repository config and cache live in the gate's own state: with --repo, helm still reads every
+  # configured repository's cached index, so one stale entry on the host fails the install.
+  helm --kubeconfig "$KCFG" --repository-config "${STATE}/helm-repositories.yaml" \
+    --repository-cache "${STATE}/helm-cache" upgrade --install external-secrets external-secrets \
     --repo https://charts.external-secrets.io --version "$ESO_VERSION" \
     --namespace external-secrets --create-namespace --wait --timeout 5m -f "${HERE}/eso-values.yaml" >/dev/null
   kp -n external-secrets get deploy external-secrets -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
