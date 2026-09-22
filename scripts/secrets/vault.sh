@@ -170,8 +170,10 @@ case "$ACTION" in
     fi
     vault write pki-lab/config/urls issuing_certificates=https://vault.vault.svc:8200/v1/pki-lab/ca \
       crl_distribution_points=https://vault.vault.svc:8200/v1/pki-lab/crl >/dev/null
+    # require_cn=false: cert-manager (and most ACME-style clients) send a CSR with SANs and no common name,
+    # and Vault refuses to sign it otherwise.
     vault write pki-lab/roles/lab allowed_domains=kindcluster.dev allow_subdomains=true allow_bare_domains=false \
-      key_type=rsa key_bits=2048 ttl=1h max_ttl=72h >/dev/null
+      require_cn=false key_type=rsa key_bits=2048 ttl=1h max_ttl=72h >/dev/null
     for policy in pki-eso pki-cert-manager; do
       vault policy write "secret-lab-${policy}" "${SECRETS_SCRIPT_DIR}/vault/policies/${policy}.hcl" >/dev/null
     done
