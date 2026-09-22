@@ -7,5 +7,11 @@ echo "-- change the backend value (48 chars instead of 32)"; openssl rand -base6
 echo "$(now) after change: owner=$(es trellis guard-owner) once=$(es trellis guard-once) keys a=$(klen trellis guard-test a) b=$(klen trellis guard-test b)  (a must move to 64 b64 chars, b must stay 44)"
 echo "-- second change to be sure CreatedOnce never refreshes"; openssl rand -base64 12 | tr -d '\n' | "$V" cli kv put -mount=secret-lab trellis/kek-guard-test value=- | grep -E '^version'; sync trellis guard-owner; sync trellis guard-once; sleep 25
 echo "$(now) after second change: a=$(klen trellis guard-test a) b=$(klen trellis guard-test b) once-status=$(es trellis guard-once) msg=$(esmsg trellis guard-once)"
+echo "== POSITIVE half: a standalone CreatedOnce + Owner ExternalSecret must pin its value across backend changes =="
+printf 'apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: guard-solo, namespace: trellis}\nspec:\n  refreshPolicy: CreatedOnce\n  secretStoreRef: {name: vault, kind: SecretStore}\n  target: {name: guard-solo, creationPolicy: Owner, deletionPolicy: Retain}\n  data:\n  - secretKey: c\n    remoteRef: {key: trellis/kek-guard-test, property: value}\n' | $K apply -f - >/dev/null; sleep 20
+first=$(klen trellis guard-solo c); echo "$(now) guard-solo initial: status=$(es trellis guard-solo) c=$first"
+openssl rand -base64 48 | tr -d '\n' | "$V" cli kv put -mount=secret-lab trellis/kek-guard-test value=- | grep -E '^version'; sync trellis guard-solo; sleep 30
+echo "$(now) after a backend change AND a forced sync: c=$(klen trellis guard-solo c) (was $first; CreatedOnce must pin it) status=$(es trellis guard-solo)"
+$K -n trellis delete externalsecret guard-solo >/dev/null; $K -n trellis delete secret guard-solo --ignore-not-found >/dev/null
 $K -n trellis delete externalsecret guard-owner guard-once >/dev/null; sleep 5; echo "after deleting both ExternalSecrets, Secret guard-test: $(klen trellis guard-test a) (Owner GC vs Retain)"; $K -n trellis delete secret guard-test --ignore-not-found >/dev/null
 "$V" cli kv metadata delete -mount=secret-lab trellis/kek-guard-test >/dev/null && echo "scratch entry removed"; echo "R12 end=$(now)"

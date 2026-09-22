@@ -24,3 +24,9 @@ what one hands-on experiment needed, kept so the measurements recorded with it c
   `CH` (the chart directory). Rows that need drift suspend the Flux Kustomization they touch and
   resume it; `r-aws-unreachable.sh` black-holes the SSM endpoint in CoreDNS and restores the live
   object afterwards.
+  **These rows mutate a live cluster destructively**: they delete the Vault pod and the application's
+  Secret, rotate real values in the backend, edit a policy file in place (an interrupted run leaves it
+  narrowed) and patch cluster-wide CoreDNS. Run them against a lab and nothing else. Timing note: a
+  bare `$(el)` next to a `$(waitfor …)` on one line reports when the wait BEGAN, because bash expands
+  command substitutions left to right; `waitfor` therefore stamps its own return as `@+Ns`, and that
+  trailing stamp is the measurement.
