@@ -11,6 +11,6 @@ Parameter Store, two authentication shapes side by side:
   SecretStore reads them through `secretRef` including `sessionTokenSecretRef`. The credentials
   Secret is refreshed well inside the STS lifetime.
 
-Parameter layout follows `<environment>-<island>/<application>/<name>`; the lab uses
-`/lab-island00/`. `REGION` is the placeholder replaced when credentials arrive. The Flux
+Parameter layout follows `<environment>-<cluster>/<application>/<name>`; the lab uses
+`/lab-cluster00/`. `REGION` is the placeholder replaced when credentials arrive. The Flux
 Kustomization is `suspend: true` until then.

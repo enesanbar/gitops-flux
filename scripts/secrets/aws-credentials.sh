@@ -25,7 +25,7 @@ case "${1:-}" in
     echo 'Secret secret-lab-aws/aws-credentials applied.' ;;
   forget)
     k -n secret-lab-aws delete secret aws-credentials --ignore-not-found >/dev/null
-    rm -f "${AWS_STATE}/access_key_id" "${AWS_STATE}/secret_access_key"
-    echo 'Static key removed from the cluster and from custody (the IAM key itself is deleted in AWS).' ;;
+    rm -f "${AWS_STATE}/access_key_id" "${AWS_STATE}/secret_access_key" "${AWS_STATE}/config.json"
+    echo 'Static key removed from the cluster and from custody. Delete the IAM access key in AWS as well; this script cannot.' ;;
   *) echo 'Usage: aws-credentials.sh import <region> <reader-role-arn> | apply | forget' >&2; exit 2 ;;
 esac

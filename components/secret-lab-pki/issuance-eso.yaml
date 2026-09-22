@@ -10,7 +10,6 @@ spec:
   method: POST
   parameters:
     common_name: leaf.kindcluster.dev
-    alt_names: leaf.kindcluster.dev
     ttl: 1h
   resultType: Data
   provider:

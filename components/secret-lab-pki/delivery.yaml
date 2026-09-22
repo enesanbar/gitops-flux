@@ -1,5 +1,5 @@
 # DELIVERY: one externally issued certificate, kept as a platform entry, rendered into two
-# differently named typed Secrets (the island's fan-out case: every consumer names its own Secret).
+# differently named typed Secrets (the fan-out case seen in the field: every consumer names its own Secret).
 # Renewal happens outside the cluster; these only follow the source.
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret

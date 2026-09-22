@@ -5,5 +5,4 @@ resources:
 - secret-store.yaml
 - delivery.yaml
 - issuance-eso.yaml
-- issuance-cert-manager.yaml
 - consumer.yaml

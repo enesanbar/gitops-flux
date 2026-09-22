@@ -2,7 +2,12 @@
 # Experiment: cert-manager issuing from the lab Vault PKI. cert-manager 1.9 authenticates to Vault
 # with a long-lived ServiceAccount token Secret (secretRef), so this creates a dedicated SA and token
 # in cert-manager's namespace and a ClusterIssuer carrying this machine's public Vault CA; both are
-# machine-specific, hence a script and not a Flux manifest.  Usage: cert-manager-vault-issuer.sh apply|delete
+# machine-specific, hence a script and not a Flux manifest; the Certificate that depends on the issuer
+# rides with it so the Flux component stays self-reconciling.
+# THREAT: the token Secret is a never-expiring API-server bearer token; anyone who can read Secrets in
+# cert-manager can sign for the role's domains until it is revoked. Revocation = 'delete' below (removes
+# the Secret and the ServiceAccount; the Vault role is harmless without them).
+# Usage: cert-manager-vault-issuer.sh apply|delete
 set +x; set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../common.sh"
 CA_FILE="${SECRET_STATE_DIR}/vault/ca.crt"; test -s "$CA_FILE" || { echo 'Run prepare-local.sh first.' >&2; exit 1; }
@@ -33,6 +38,18 @@ spec:
         mountPath: /v1/auth/kubernetes
         role: pki-cert-manager
         secretRef: {name: cert-manager-vault-token, key: token}
+---
+# ISSUANCE through cert-manager: renewed by cert-manager on its own schedule; the Secret is cert-manager's.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: cm-leaf, namespace: secret-lab-pki}
+spec:
+  secretName: cm-leaf-tls
+  dnsNames: [cm-leaf.kindcluster.dev]
+  duration: 1h      # cert-manager's minimum
+  renewBefore: 20m
+  privateKey: {algorithm: RSA, size: 2048}
+  issuerRef: {name: vault-lab, kind: ClusterIssuer}
 YAML
 }
 case "${1:-}" in
