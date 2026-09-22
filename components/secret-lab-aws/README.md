@@ -12,5 +12,5 @@ Parameter Store, two authentication shapes side by side:
   Secret is refreshed well inside the STS lifetime.
 
 Parameter layout follows `<environment>-<cluster>/<application>/<name>`; the lab uses
-`/lab-cluster00/`. `REGION` is the placeholder replaced when credentials arrive. The Flux
-Kustomization is `suspend: true` until then.
+`/lab-cluster00/`. The region is the estate's Parameter Store region. The Flux
+Kustomization was suspended until the credentials existed.

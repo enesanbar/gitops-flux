@@ -62,7 +62,7 @@ spec:
   provider:
     aws:
       service: ParameterStore
-      region: REGION
+      region: us-west-1
       auth:
         secretRef:
           accessKeyIDSecretRef:
