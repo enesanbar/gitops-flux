@@ -73,13 +73,21 @@ case "$ACTION" in
     vault auth list -format=json | jq -e 'has("kubernetes/")' >/dev/null || vault auth enable kubernetes
     vault auth list -format=json | jq -e 'has("userpass/")' >/dev/null || vault auth enable userpass
     vault write auth/kubernetes/config kubernetes_host=https://kubernetes.default.svc:443 >/dev/null
-    for policy in operator eso vso; do
+    for policy in operator eso vso trellis trellis-app; do
       vault policy write "secret-lab-${policy}" "${SECRETS_SCRIPT_DIR}/vault/policies/${policy}.hcl" >/dev/null
     done
     for mode in eso vso; do
       vault write "auth/kubernetes/role/${mode}" bound_service_account_names=vault-auth \
         "bound_service_account_namespaces=secret-lab-${mode}" audience=vault \
         "token_policies=secret-lab-${mode}" token_no_default_policy=true token_ttl=10m token_max_ttl=1h >/dev/null
+    done
+    # Application roles: <role>:<namespace>:<service account>:<policy>. The store role is
+    # what ESO logs in with; the app role is what the process itself may use (ADR-104 seam).
+    for spec in trellis:trellis:vault-auth:secret-lab-trellis trellis-app:trellis:trellis:secret-lab-trellis-app; do
+      IFS=: read -r role ns sa policy <<<"$spec"
+      vault write "auth/kubernetes/role/${role}" "bound_service_account_names=${sa}" \
+        "bound_service_account_namespaces=${ns}" audience=vault \
+        "token_policies=${policy}" token_no_default_policy=true token_ttl=10m token_max_ttl=1h >/dev/null
     done
     if [[ ! -s "${VAULT_STATE}/operator-password" ]]; then
       # Do not silently reset an existing account if its local password is missing.
