@@ -1,8 +1,11 @@
 # Conventions for delivering secrets with the External Secrets Operator
 
 What follows is what the experiments in this repository settled, stated as rules with the reason
-attached. Where a rule exists because something was measured, the measurement is named. Where it is
-a judgement call, it says so.
+attached. Each rule says which kind it is: **Measured** names the script under
+`scripts/secrets/experiments/` that observed it, and **Judgement** marks a design call that no
+experiment can settle. The operator-version parity gate (`parity/`) ran every measured feature on
+ESO 2.11.0 and 0.20.3 with the same checks; a difference between the two is called out where it
+exists.
 
 The scope is **delivery**: getting a value that lives in an external store into a Kubernetes Secret,
 and from there into a process. Issuance (minting a certificate, creating a database user) is a
@@ -11,6 +14,8 @@ different problem and is called out where the two are easy to confuse.
 ## 1. Where secrets live in the backend
 
 ### The rule
+
+**Judgement** — no experiment measures a naming scheme; the criteria are the ones the table scores.
 
 Put in the path only what is **stable** and what a **policy has to cut on**. Everything else —
 owning team, ticket, cost centre, who asked for it — belongs in metadata, because a path is an
@@ -91,6 +96,58 @@ ServiceAccount token Secret mounted into a pod. Grant the operator `create` on
 `serviceaccounts/token` for **that one ServiceAccount by name** (`resourceNames`), which is what
 `components/trellis-secrets/rbac.yaml` does.
 
+### That grant is only real if the operator has no wider one
+
+**Measured** (`parity/parity-checks.sh`, the token-minting observation; `parity/parity-gate.sh remedy`).
+The chart may already have given the operator token creation in every namespace, and then the
+per-namespace Role adds nothing: a compromised or misconfigured operator can mint an API token for
+any ServiceAccount in the cluster, including privileged ones.
+
+| Chart | Cluster-wide token creation | Asked of the operator's identity |
+| --- | --- | --- |
+| before 2.5.0 (0.20.3 measured) | **granted unconditionally**; no value turns it off | any ServiceAccount in `kube-system`: **yes**; a ServiceAccount the Role does not name: **yes** |
+| 2.5.0 and later | `rbac.serviceAccountTokenCreate`, **default `true`** | as above until it is set to `false` |
+| 2.11.0 with `rbac.serviceAccountTokenCreate: false` (this repository) | removed | `kube-system`: **no**; the named ServiceAccount: **yes**; any other: **no** |
+
+Ask the question directly rather than reading chart versions:
+
+```bash
+kubectl auth can-i create serviceaccounts --subresource=token -n kube-system \
+  --as=system:serviceaccount:external-secrets:external-secrets
+```
+
+The fix, by chart version:
+
+- **2.5.0 and later**: set `rbac.serviceAccountTokenCreate: false` in the operator's values, as
+  `components/external-secrets/helm-release.yaml` does, and give every namespace that has a store its
+  own Role.
+- **Before 2.5.0**: remove the rule after rendering. A Flux `HelmRelease` does it with a post-renderer
+  carrying `scripts/secrets/experiments/parity/strip-token-rule.patch.yaml`:
+
+  ```yaml
+  spec:
+    postRenderers:
+    - kustomize:
+        patches:
+        - target: {kind: ClusterRole, name: external-secrets-controller}
+          patch: |
+            - op: test
+              path: /rules/7/resources/0
+              value: serviceaccounts/token
+            - op: remove
+              path: /rules/7
+  ```
+
+  Index 7 is where the rule sits in a 0.20.3 render with this repository's values; other values
+  add or drop rules above it, so derive the index from your own render (`helm template` piped
+  through `yq`). The `test` operation is what makes a wrong index safe: the render stops instead of
+  removing a different rule, so a failed reconcile after a chart or values change means "re-derive
+  the index", not "the patch is broken". Measured on 0.20.3: with the rule removed, the
+  namespaced store keeps working on its Role alone, and removing that Role then breaks it — so the
+  Role is what the store depends on, which is the property the pattern exists to give. The patch
+  ops were applied to the live ClusterRole and to a chart render; the `HelmRelease` wrapper itself
+  was not run through Flux here.
+
 Cluster-scoped is the right answer for exactly one shape: material the platform owns, that is byte
 -identical in every namespace, and whose reader identity genuinely is "the cluster" — a private
 registry pull credential, for instance. Even then, prefer one `ExternalSecret` per namespace over a
@@ -106,16 +163,19 @@ that thing from the Secret alone.**
 | --- | --- | --- |
 | Application credentials from an external store | An `ExternalSecret` with `creationPolicy: Owner` | A chart that also templates the same Secret |
 | Certificates issued in-cluster | cert-manager's `Certificate` | An `ExternalSecret` pointing at the same name |
-| Operator-internal credentials (database operators, brokers) | That operator | Anything else; the operator will reconcile you away |
+| Operator-internal credentials (database operators, brokers) | That operator | Anything else; the operator will reconcile you away (**judgement**, not measured here) |
 | Chart-generated internals (cookies, admin passwords) | The chart | Moving them to the store for its own sake |
 
-Two consequences that were measured rather than assumed:
+Two consequences, **measured** (`matrix/r12-key-class.sh`):
 
 - **`creationPolicy: Owner` puts an owner reference on the Secret**, so deleting or renaming the
   `ExternalSecret` garbage-collects the running application's Secret. In a GitOps repository that
   makes a *pruning* event — a moved file, a renamed component — into an outage. Application
   `ExternalSecret`s therefore carry `kustomize.toolkit.fluxcd.io/prune: disabled`. `deletionPolicy:
   Retain` does not help here: it covers a vanished **backend** entry, not a vanished ExternalSecret.
+  The price is drift: a renamed or removed `ExternalSecret` now stays in the cluster until someone
+  deletes it by hand. That is the right trade — a stale object is visible, a missing Secret is an
+  outage — but it is a trade, and a rename needs that manual step.
 - **You cannot merge into a Secret somebody else owns.** `creationPolicy: Merge` against a Secret
   that already carries another owner is refused, which is the operator protecting the rule above.
   Plan for it: there is no "add one key to the chart's Secret" move.
@@ -154,37 +214,55 @@ For that class:
   application blob with the credentials, so that its policy, its refresh and its blast radius are
   separate.
 - Use `refreshPolicy: CreatedOnce`. The value must not change underneath a running process, because
-  a process that re-reads it will decrypt nothing.
+  a process that re-reads it will decrypt nothing. **Measured** on both operator versions
+  (`parity/parity-checks.sh` P2): a new backend version never reaches it.
+- **When the consumer takes one Secret** — a chart with a single `existingSecret` for the key and its
+  credentials — the key cannot have a Secret of its own, and `CreatedOnce` would freeze the
+  credentials with it. Pin the key's backend version instead (`remoteRef.version`). **Measured** on
+  both operator versions against Vault KV v2 (`parity/parity-checks.sh` P2, P3): a new version of the
+  key reaches nothing, the pinned `ExternalSecret` stays healthy, and the other keys in the same
+  Secret keep refreshing. Rotating the key is then a reviewed commit that moves one number, made as
+  the last step of the re-encryption. `components/trellis-secrets/` is this case.
 - Use `deletionPolicy: Retain`, so a backend blip cannot remove the key from under a mounted volume.
 - Never put it behind a generator, a chart `randAlphaNum` default, or anything else that can produce
   a *new* value when the old one is missing. Silent regeneration of a key is indistinguishable from
   total data loss, and it happens at the worst possible moment: when the backend is unreachable.
+- Never put an **unpinned** key in a Secret a reloader watches: the reloader turns a backend write
+  into a restart within the refresh interval, and the process comes up under a key that opens none
+  of the data sealed with the old one. A pinned or `CreatedOnce` key is safe beside a reloader:
+  **measured** (`matrix/r16-pinned-key-under-reloader.sh`), a new version of a pinned key refreshed
+  the Secret without changing its bytes and restarted nothing, while a new version of an unpinned key
+  in the same Secret restarted the consumer.
 
 ## 5. Operator features: what to standardize, and what to refuse
 
 ### Standardize
 
-| Feature | Why |
-| --- | --- |
-| Explicit `data[]` mapping | The `ExternalSecret` states every key it produces, so a reviewer can see the Secret's shape without reading the backend, and a key that disappears upstream becomes an error rather than an absence. |
-| `dataFrom.extract` for one entry | The right tool for a credential *pair* — a username and password replaced together are one entry, and naming both fields separately invites them to drift apart. |
-| `template.type` with `engineVersion: v2` | The only way to produce a typed Secret (`kubernetes.io/tls`, a dockerconfigjson) from arbitrary backend fields. Guard every field access with `with`: a template that reads an absent field does not fail, it renders the raw object into your Secret. |
-| `refreshPolicy: Periodic`, interval chosen from the consumer | The interval is a promise about how stale a value may be. Choose it from what the consumer does with the value, not from a default: an hour is right for most things, and anything shorter is a load decision you are making on the backend's behalf. |
-| `creationPolicy: Owner` | One manager per Secret, visible in the object itself. Pair it with the prune-disabled annotation (§3). |
-| `deletionPolicy: Retain` | A backend that answers "not found" — because of an outage, a policy change, a typo in a path — must not remove a Secret a pod has mounted. |
-| A namespaced `SecretStore` with TokenRequest auth | §2. |
+Every **measured** row held on ESO 2.11.0 and 0.20.3 alike (`parity/parity-checks.sh`, which runs
+the same checks against both).
+
+| Feature | Why | Evidence |
+| --- | --- | --- |
+| Explicit `data[]` mapping | The `ExternalSecret` states every key it produces, so a reviewer can see the Secret's shape without reading the backend, and a key that disappears upstream becomes an error rather than an absence. | **Measured**: a deleted entry turned the ExternalSecret `SecretSyncedError` while the Secret kept its key (P5). |
+| `dataFrom.extract` for one entry | The right tool for a credential *pair*: a username and password replaced together are one entry, and naming both fields separately invites them to drift apart. | **Measured**: every field of one entry, and only those (P1). |
+| `template.type` with `engineVersion: v2` | The only way to produce a typed Secret (`kubernetes.io/tls`, a dockerconfigjson) from arbitrary backend fields. | **Measured**: a typed `kubernetes.io/tls` Secret from two fields (P1). |
+| `remoteRef.version` on a key that shares a Secret | The guard for the key class when the consumer takes one Secret (§4). | **Measured**: a new version reaches nothing, the other keys keep refreshing (P2, P3). |
+| `refreshPolicy: Periodic`, interval chosen from the consumer | The interval is a promise about how stale a value may be. Choose it from what the consumer does with the value, not from a default. | **Measured** that it follows: a new version reached the Secret within one 30-second interval (P2). **Judgement**: an hour suits most consumers, and anything shorter is a load decision made on the backend's behalf. |
+| `creationPolicy: Owner` | One manager per Secret, visible in the object itself. Pair it with the prune-disabled annotation (§3). | **Measured**: owner reference present (P1); garbage collection on deletion (`matrix/r12-key-class.sh`). |
+| `deletionPolicy: Retain` | A backend that answers "not found" — an outage, a policy change, a typo in a path — must not remove a Secret a pod has mounted. | **Measured**: the Secret survived its entry's deletion (P5). |
+| A namespaced `SecretStore` with TokenRequest auth | §2. | **Measured**, with the chart-version caveat in §2. |
 
 ### Do not standardize
 
-| Feature | Why not |
-| --- | --- |
-| `dataFrom.find` | It reports success for whatever it found. Remove a key from the matched set and it disappears from the Secret while the `ExternalSecret` stays green — the failure mode with no signal, which is the worst kind. Use it for exploration, never for delivery. |
-| `deletionPolicy: Delete` on anything mounted | It converts a backend blip into a removed Secret, and a removed Secret under a `subPath` mount is not something a running pod recovers from. |
-| `ClusterSecretStore` and `ClusterExternalSecret` | §2. Both are off in this repository's operator values. |
-| Generators for anything with a lifetime | A generator mints a credential with an expiry the Kubernetes object knows nothing about. The Secret keeps looking correct long after the credential behind it has expired, and the first signal is the application failing. Acceptable only where the lifetime is managed deliberately, with margin, and someone owns the renewal. |
-| `PushSecret` | It syncs Kubernetes → external store, which is backwards: it makes the cluster the source of truth for material the cluster is supposed to be a consumer of. |
-| `creationPolicy: Merge` into a foreign Secret | Refused by the operator, and rightly (§3). |
-| `refreshPolicy: CreatedOnce` as a default | Correct for the key class (§4) and wrong for everything else, where it silently pins a credential at its first value and no rotation ever reaches the cluster. |
+| Feature | Why not | Evidence |
+| --- | --- | --- |
+| `dataFrom.find` | It reports success for whatever it found. Remove a key from the matched set and it disappears from the Secret while the `ExternalSecret` stays green — the failure mode with no signal, which is the worst kind. Use it for exploration, never for delivery. | **Measured** on Vault with both operator versions (P6) and on Parameter Store (`matrix/r-aws-rows.sh`). |
+| `deletionPolicy: Delete` on anything mounted | It converts a backend blip into a removed Secret, and a removed Secret under a `subPath` mount is not something a running pod recovers from. | **Measured**: the Secret was deleted within a minute of its entry (P4). |
+| `ClusterSecretStore` and `ClusterExternalSecret` | §2. Their reconcilers are off in this repository's operator values. | **Judgement**. |
+| Generators for anything with a lifetime | A generator mints a credential with an expiry the Kubernetes object knows nothing about. The Secret keeps looking correct after the credential behind it has expired, and the first signal is the application failing. Acceptable only where the lifetime is managed deliberately, with margin, and someone owns the renewal. | **Measured** (`matrix/r-sts-expiry.sh`): the consuming store failed while the ExternalSecret holding the minted credentials still reported success. |
+| `PushSecret` | It syncs Kubernetes → external store, which is backwards: it makes the cluster the source of truth for material the cluster is supposed to consume. | **Judgement**. |
+| `creationPolicy: Merge` into a foreign Secret | Refused by the operator, and rightly (§3). | **Measured** (`matrix/r12-key-class.sh`). |
+| `refreshPolicy: CreatedOnce` as a default | Correct for the key class (§4) and wrong for everything else, where it pins a credential at its first value and no rotation ever reaches the cluster. | **Measured** that it never follows (P2); **judgement** that this is wrong for credentials. |
 
 ## 6. Shared credentials
 
@@ -196,7 +274,7 @@ migrating it, because the answer changes the target shape:
   shared, deliver it by reference to each consumer, and record why.
 - **Shared by packaging**: it is one credential because it arrived in one file, not because anything
   requires it. This is the common case, and it is worth undoing: per-application credentials give
-  per-application blast radius, rotation without a fleet-wide restart, and an audit trail that names
+  per-application blast radius, rotation without restarting every consumer, and an audit trail that names
   the caller.
 
 The test that separates them is **"can the issuing side issue a second one?"** A message broker can
@@ -218,10 +296,14 @@ Two properties that are easy to assume and are not true:
   within the refresh interval. A process holding the value in an environment variable never sees the
   new one, and a file mounted with `subPath` is not updated in place either — only a whole-volume
   mount is, and then only if the process re-reads it. Closing that gap needs a restart, which means
-  either a deliberate rollout or a reloader (see `README.md` for the trade-off).
-- **A green `SecretStore` is not a working store.** The store's condition reflects its last
-  validation, not the current state of the backend. The signal that matters is the `ExternalSecret`'s
-  own condition and its message.
+  either a deliberate rollout or a reloader (see `README.md` for the trade-off). **Measured** on this
+  lab's application, for environment and `subPath` delivery both.
+- **A green `SecretStore` is not a working store.** The store's condition tracks whether the operator
+  can *log in*: a sealed Vault turned it `InvalidProviderConfig` (`matrix/r1-backend-unavailable.sh`).
+  Everything that fails after login leaves it `Valid` — a revoked policy
+  (`matrix/r2-permission-revoked.sh`), a deleted entry, credentials that expired downstream. The
+  signal that matters is the `ExternalSecret`'s own condition, and the cause is in its events: the
+  condition message is the same generic text whatever went wrong. **Measured**.
 
 ## 8. Five shapes, end to end
 
@@ -245,7 +327,7 @@ spec:
 
 **The decision:** the interval is a promise about staleness, and the process will not see the new
 value until it restarts. If the vendor can revoke at any moment, the application must survive a
-reload, or the reloader in §5 becomes part of the design rather than an option.
+reload, or a reloader (`README.md`) becomes part of the design rather than an option.
 
 ### 8.2 A credential pair
 
@@ -274,7 +356,17 @@ spec:
 ```
 
 Its own Secret, mounted as a file rather than an environment variable, and never composed with the
-credentials. **The decision:** nothing in the path may be able to generate a value. A generator, a
+credentials. When the consumer only takes one Secret, compose it and pin the key's version instead:
+
+```yaml
+  data:
+  - secretKey: KEK
+    remoteRef: {key: billing-api/kek, property: KEK, version: "3"}   # moved by a reviewed commit only
+  - secretKey: DB_PASSWORD
+    remoteRef: {key: billing-api/db, property: password}              # refreshes as usual
+```
+
+**The decision:** nothing in the path may be able to generate a value. A generator, a
 chart's `randAlphaNum` default or a `creationPolicy` fed by randomness turns "the backend is
 unreachable" into "the data is gone", and the two are indistinguishable from inside the cluster.
 

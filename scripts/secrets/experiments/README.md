@@ -18,13 +18,19 @@ what one hands-on experiment needed, kept so the measurements recorded with it c
   `vault-lab` carrying this machine's public Vault CA, and the `cm-leaf` Certificate in
   `secret-lab-pki`. Run `vault.sh pki` first (the mount, role and policies), then this script; the
   `secret-lab-pki` component itself needs neither. `delete` revokes the token and removes all three.
-- `parity/` — the operator-version parity gate: a throwaway kind cluster on this lab's Docker
-  network running the External Secrets Operator at the version an older fleet runs, so the reference
-  manifests can be replayed against the same Vault and compared. `parity-gate.sh up|down` builds and
-  destroys it (cluster, a NodePort on the lab Vault, the tenant auth mounts and the `parity` role);
-  `parity-checks.sh` is the behavioural half. The reference ExternalSecrets are applied byte-for-byte
-  and only ever read, because their paths hold the running lab application's key-encryption key; the
-  mutable half reads `secret-lab/parity/*`, seeded and destroyed with the cluster.
+- `parity/` — the operator-version parity gate. `parity-gate.sh up` builds a throwaway kind cluster
+  on this lab's Docker network running ESO 0.20.3 with the lab's own values, reaching the lab Vault
+  through a temporary NodePort and the tenant auth mounts (it refuses to run while the `tenant-auth/`
+  experiment holds them), and replays `components/trellis-secrets/` there byte-for-byte except for
+  the store's auth mount and role. `parity-checks.sh <label> <kubectl target args>` then runs the
+  same behavioural checks against any cluster — once against the lab (2.11.0), once against the
+  throwaway — each in `secret-lab-eso` with its own `secret-lab/eso/parity-<label>/*` subtree,
+  PASS/FAIL per check, exit status the number of failures. `parity-gate.sh remedy` strips chart
+  0.20.3's cluster-wide token-creation rule with `strip-token-rule.patch.yaml` (the patch a Flux
+  post-renderer would carry) and removes, then restores, the namespaced Role to show the store
+  depends on it. `parity-gate.sh down` removes everything `up` created, and `up` runs it itself on
+  any failure. The replay copies the lab application's live key-encryption key into the
+  throwaway's etcd for as long as it exists.
 - `matrix/` — the rotation and failure/recovery rows, one script per row group, each printing
   statuses, key names, lengths and timings only. `lib.sh` is sourced by the others; export
   `SECRET_STATE_DIR`, and for `r1-backend-unavailable.sh` also `S5` (the release values file) and

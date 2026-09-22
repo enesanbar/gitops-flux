@@ -1,7 +1,7 @@
 # Secret-management operator guide
 
 Run commands from the repository root. Target: `kind-local-dind-cluster` only.
-This prepares experiments for **TASK-0669.02**; it does not choose a mechanism.
+It prepares the experiments; it does not choose a mechanism.
 
 Prerequisites: `kubectl`, `flux`, `helm`, `kubeseal`, `vault`, `mkcert`, `jq`,
 `openssl`, `python3`, and the existing kind/Docker environment. Every helper
@@ -203,8 +203,8 @@ kubectl --context kind-local-dind-cluster -n external-secrets logs deployment/ex
 ```
 
 Use namespace-scoped stores by default. Store definitions and auth SAs belong to
-the namespace owner. ClusterSecretStore/ClusterExternalSecret, push-secret and
-cluster-generator controllers are disabled; enabling them is a separate trust
+the namespace owner. The ClusterSecretStore/ClusterExternalSecret and push-secret
+reconcilers are disabled and cluster generators get no RBAC; enabling any is a separate trust
 decision. Further providers get their own store/auth definition without replacing
 the operator. Do not give tenants permission to edit another team's stores.
 Generated Secrets are controller-owned; do not apply a competing Secret manifest.
@@ -222,39 +222,51 @@ example; everything below is what you actually type.
 
 Four objects, in this order. `<app>` is both the namespace and the path segment.
 
-1. **A Vault policy and role for the application.** The policy reads one subtree and nothing else;
-   the role binds it to one ServiceAccount in one namespace, with an audience.
+1. **A Vault policy and role for the application**, committed rather than typed. The policy reads
+   one subtree and nothing else; the role binds it to one ServiceAccount in one namespace, with an
+   audience. The operator login cannot write either, so both go through `vault.sh bootstrap`, which
+   applies what the repository holds and is safe to re-run:
 
    ```bash
-   # policy: read-only on the application's own subtree
-   ./scripts/secrets/vault.sh cli policy write secret-lab-<app> - <<'HCL'
+   cat > scripts/secrets/vault/policies/<app>.hcl <<'HCL'
    path "secret-lab/data/<app>/*"     { capabilities = ["read"] }
    path "secret-lab/metadata/<app>/*" { capabilities = ["read", "list"] }
    HCL
+   # In vault.sh bootstrap, add <app> to the policy loop, and <app>:<app>:vault-auth:secret-lab-<app>
+   # to the application-role loop (<role>:<namespace>:<service account>:<policy>). Then:
+   ./scripts/secrets/vault.sh bootstrap
    ```
 
-   The role itself needs mount administration, so it is written by `vault.sh bootstrap` alongside
-   the others rather than by hand — add the application to the loop there.
+2. **The identity, in the application's namespace**: a ServiceAccount no pod mounts, and a Role
+   letting the operator mint a token for that one ServiceAccount. It belongs in the application's
+   component beside its store, so copy `components/trellis-secrets/rbac.yaml` there and change the
+   namespace.
 
-2. **The identity, in the application's namespace.** A ServiceAccount that no pod mounts, plus the
-   narrowest RBAC that lets the operator mint a token for it:
+   `resourceNames: [vault-auth]` is what narrows the grant to one ServiceAccount — **but only while
+   the operator holds no wider grant of its own.** Check before relying on it:
 
    ```bash
-   sed 's/trellis/<app>/g' components/trellis-secrets/rbac.yaml | \
-     kubectl --context kind-local-dind-cluster apply -f -
+   kubectl --context kind-local-dind-cluster auth can-i create serviceaccounts --subresource=token \
+     -n kube-system --as=system:serviceaccount:external-secrets:external-secrets
    ```
 
-   `resourceNames: [vault-auth]` on the Role is the part that matters: without it the operator may
-   mint a token for *any* ServiceAccount in that namespace.
+   `no` means the Role is the whole grant. `yes` means the chart gave the operator token creation in
+   every namespace and the Role adds nothing: charts before 2.5.0 grant it unconditionally, and from
+   2.5.0 `rbac.serviceAccountTokenCreate` controls it and defaults to `true`. CONVENTIONS.md §2 has
+   the fix for both. (`kubectl auth can-i` exits non-zero when the answer is `no`; read the answer,
+   not the exit status.)
 
-3. **The CA the store trusts**, as a ConfigMap — a public certificate, not a secret:
-
-   ```bash
-   ./scripts/secrets/prepare-local.sh        # restores vault-ca into each configured namespace
-   ```
+3. **The CA the store trusts**, as a ConfigMap: a public certificate, not a secret, but specific
+   to this machine, so `scripts/secrets/prepare-local.sh` creates it rather than Git. That script only
+   knows the namespaces it lists: add `<app>` to both lists (the namespaces it creates, and the ones
+   it writes `vault-ca` into), then re-run it. It also restores the Sealed Secrets key, so it is a
+   bootstrap step, not a ConfigMap helper.
 
 4. **The store and the ExternalSecret**, copied from `components/trellis-secrets/` with the
-   namespace, role and paths changed. Then check it landed:
+   namespace, role and paths changed, in a component wired the way every component here is: the
+   component under `components/`, a shim under `clusters/dev-cluster/components/`, and its Flux
+   `Kustomization` registered in that tree's `flux-system/kustomize/`. Give the component a
+   `Namespace` manifest if nothing else creates the namespace. Once Flux has applied it:
 
    ```bash
    kubectl --context kind-local-dind-cluster -n <app> get secretstore,externalsecret
@@ -278,17 +290,20 @@ Four objects, in this order. `<app>` is both the namespace and the path segment.
 Write the new version in the backend; nothing in the cluster needs touching.
 
 ```bash
-./scripts/secrets/vault.sh cli kv put secret-lab/<app>/<entry> KEY="$(openssl rand -base64 32 | tr -d '\n')"
+openssl rand -base64 32 | tr -d '\n' | \
+  ./scripts/secrets/vault.sh cli kv put -mount=secret-lab <app>/<entry> KEY=-
 ```
 
+`KEY=-` reads the value from standard input, so it never reaches the process list or shell history.
 `tr -d '\n'` is not decoration: `openssl` and `jq -r` both append a newline, and that newline is
-delivered into the Secret and into whatever reads it.
+delivered into the Secret and into whatever reads it. `kv put` **replaces the whole entry** — any
+other field in it is gone afterwards — so to change one field of several, use `kv patch`.
 
 The Secret follows within the refresh interval. To stop waiting:
 
 ```bash
 kubectl --context kind-local-dind-cluster -n <app> annotate externalsecret <name> \
-  force-sync="$(date +%s%N)" --overwrite
+  force-sync="$(date +%s)" --overwrite
 ```
 
 **The process does not follow.** An environment variable is fixed at container start, and a file
@@ -310,36 +325,43 @@ present, never a value swap. CONVENTIONS.md §4 has the full rule.
 
 ### Reading the failure
 
-The `ExternalSecret`'s condition is the signal. The `SecretStore`'s is not: it reflects the last
-validation, and it stays `Valid` through a backend outage.
+Read the `ExternalSecret`, then its events. Its condition says **whether** the last sync failed, not
+why: the message is the same `could not get secret data from provider` whatever the cause, and the
+cause is only in the events and the controller log.
 
 ```bash
 kubectl --context kind-local-dind-cluster -n <app> get externalsecret -o custom-columns=\
-'NAME:.metadata.name,REASON:.status.conditions[0].reason,MESSAGE:.status.conditions[0].message'
+'NAME:.metadata.name,REASON:.status.conditions[0].reason,REFRESHED:.status.refreshTime'
+kubectl --context kind-local-dind-cluster -n <app> describe externalsecret <name>   # Events: the cause
 kubectl --context kind-local-dind-cluster -n external-secrets logs deployment/external-secrets --tail=50
 ```
 
+The `SecretStore`'s condition tracks something narrower: whether the operator can **log in**. It
+turns `InvalidProviderConfig` when a login fails — a sealed Vault did it here as reliably as a wrong
+role would — and stays `Valid` through everything that goes wrong after login: a revoked policy, a
+deleted entry, credentials that expired downstream. A green store is not a working store.
+
 | What you see | What it means | What to do |
 | --- | --- | --- |
-| `SecretSynced` | The last sync succeeded. It does **not** mean the value is current — a Secret delivered under `deletionPolicy: Retain` keeps serving the last good value while the backend is failing. Read the timestamp too. | Nothing. |
-| `SecretSyncedError` + `permission denied` | The Vault role or policy does not cover the path, or the role's binding does not match this namespace and ServiceAccount. | Check the policy path and the role's `bound_service_account_namespaces`. |
-| `SecretSyncedError` + a "not found" message | The path is wrong, or the entry was deleted — and a missing entry reads the same as a typo. **The wording is the provider's, not the operator's**: Parameter Store surfaces as `Secret does not exist` (never the API's own `ParameterNotFound`), Vault as `could not get secret data from provider`. Match on the condition, not on the string. | Compare the `remoteRef.key` against a listing of the parent path. |
-| `SecretSyncedError` + a DNS or connection error | The backend is unreachable. Under `Retain` the Secret stays; under `Delete` it will be removed. | Fix the reach; do not "fix" it by deleting the ExternalSecret, which garbage-collects the Secret. |
-| `InvalidProviderConfig` on the store | The store's CA, server URL or auth block is wrong. | The store, not the ExternalSecret. |
-| A Secret that vanished | `deletionPolicy: Delete` met a backend that answered "not found". | Restore the backend entry; then change the policy to `Retain`. |
+| `SecretSynced` | The last sync succeeded. It does **not** mean the value is current: under `deletionPolicy: Retain` a Secret keeps its last good value while syncs fail, so check `REFRESHED`. | Nothing. |
+| `SecretSyncedError`, store `Valid` | Login works and reading does not. The event says which: `Secret does not exist` for a missing entry or a mistyped path (the two read the same, for Vault and Parameter Store alike, and never as Parameter Store's own `ParameterNotFound`), `permission denied` when the policy does not cover the path, an access denial with a request id, an expired token. | Follow the event. For a path, compare `remoteRef.key` with a listing of its parent. |
+| `SecretSyncedError`, store `InvalidProviderConfig` | The operator cannot log in: the backend is sealed or unreachable, or the store's CA, server, auth mount or role is wrong. | The backend's health **first**, the store definition second. Never delete the ExternalSecret to "reset" it: that garbage-collects the Secret. |
+| `SecretDeleted`, and the Secret is gone | `deletionPolicy: Delete` met a backend that answered "not found". | Restore the entry, then change the policy to `Retain`. |
 
 ### Restarting on change: what a reloader costs
 
 `components/reloader/` closes the gap between "the Secret changed" and "the process sees it": it
-watches Secrets and restarts the Deployments that consume them, about a minute after the change.
+watches Secrets and restarts the Deployments that consume them. Measured end to end, a backend write
+reached the running process in 59 seconds on a one-minute refresh interval — the reloader reacts to
+the Secret changing, so the interval dominates. A refresh that changes nothing restarts nothing.
 Three things come with it, and they are the reason it is opt-in rather than default:
 
 - It needs **get/list/watch on Secrets cluster-wide**. That is a controller that can read every
   Secret in the cluster, so it is a trust decision, not a convenience.
 - Every consumer of a changed Secret restarts. A Secret shared by several workloads becomes a
   fan-out restart, which is exactly when you least want one.
-- It leaves a **content digest of the Secret readable on the Deployment**
-  (`reloader.stakater.com/last-reloaded-from`, a 40-character hash). Switching the reload strategy
+- It leaves a **content digest of the Secret readable on the Deployment**: the pod-template
+  annotation `reloader.stakater.com/last-reloaded-from` carries a 40-character `hash` field. Switching the reload strategy
   moves that fingerprint; it cannot remove it, because detecting that content changed is the
   mechanism. A workload whose key must not be fingerprinted at all cannot use a reloader.
 
