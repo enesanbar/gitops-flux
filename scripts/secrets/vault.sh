@@ -48,6 +48,56 @@ normal_token() {
   test -s "${VAULT_STATE}/operator-token" || { echo 'Run vault.sh login first.' >&2; exit 1; }
   export VAULT_TOKEN="$(cat "${VAULT_STATE}/operator-token")"
 }
+tenant_auth_enable() { # <kubeconfig> <api-url>
+  local kubeconfig="$1" api_url="$2" work issuer role_args
+  work="$(mktemp -d "${VAULT_STATE}/.tenant-auth.XXXXXX")"; trap 'rm -rf "$work"' RETURN
+  kubectl --kubeconfig "$kubeconfig" config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d >"${work}/ca.pem"
+  kubectl --kubeconfig "$kubeconfig" get --raw /openid/v1/jwks >"${work}/jwks.json"
+  python3 - "${work}/jwks.json" >"${work}/pubkeys.pem" <<'PYX'
+import json, sys, base64
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
+def b64(s): return int.from_bytes(base64.urlsafe_b64decode(s + "=" * (-len(s) % 4)), "big")
+for k in json.load(open(sys.argv[1]))["keys"]:
+    pub = rsa.RSAPublicNumbers(b64(k["e"]), b64(k["n"])).public_key()
+    sys.stdout.write(pub.public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode())
+PYX
+  issuer="$(kubectl --kubeconfig "$kubeconfig" get --raw /.well-known/openid-configuration | jq -r .issuer)"
+  # A Vault outside the tenant has no identity the tenant API server accepts for TokenReview, and a
+  # client token bound to audience "vault" is not a bearer token there either, so the tenant issues a
+  # long-lived reviewer token that this Vault holds: the key-distribution cost of this method.
+  kubectl --kubeconfig "$kubeconfig" apply -f "${SECRETS_SCRIPT_DIR}/experiments/tenant-auth/reviewer.yaml" >/dev/null
+  for attempt in {1..20}; do
+    kubectl --kubeconfig "$kubeconfig" -n kube-system get secret vault-token-reviewer -o go-template='{{index .data "token"}}' 2>/dev/null | grep -q . && break; sleep 1
+  done
+  role_args=(bound_audiences=vault token_policies=secret-lab-tenant-probe token_no_default_policy=true token_ttl=10m token_max_ttl=1h)
+  vault auth list -format=json | jq -e 'has("kubernetes-tenant/")' >/dev/null || vault auth enable -path=kubernetes-tenant kubernetes
+  kubectl --kubeconfig "$kubeconfig" -n kube-system get secret vault-token-reviewer -o go-template='{{index .data "token"}}' | base64 -d |
+    vault write auth/kubernetes-tenant/config "kubernetes_host=${api_url}" "kubernetes_ca_cert=@${work}/ca.pem" \
+      disable_local_ca_jwt=true token_reviewer_jwt=- >/dev/null
+  vault write auth/kubernetes-tenant/role/tenant-probe bound_service_account_names=vault-auth \
+    bound_service_account_namespaces=default audience=vault token_policies=secret-lab-tenant-probe \
+    token_no_default_policy=true token_ttl=10m token_max_ttl=1h >/dev/null
+  vault auth list -format=json | jq -e 'has("jwt-tenant/")' >/dev/null || vault auth enable -path=jwt-tenant jwt
+  vault write auth/jwt-tenant/config "jwks_url=${api_url}/openid/v1/jwks" "jwks_ca_pem=@${work}/ca.pem" "bound_issuer=${issuer}" >/dev/null
+  vault write auth/jwt-tenant/role/tenant-probe role_type=jwt user_claim=sub \
+    bound_subject=system:serviceaccount:default:vault-auth "${role_args[@]}" >/dev/null
+  vault auth list -format=json | jq -e 'has("jwt-tenant-static/")' >/dev/null || vault auth enable -path=jwt-tenant-static jwt
+  vault write auth/jwt-tenant-static/config "jwt_validation_pubkeys=@${work}/pubkeys.pem" "bound_issuer=${issuer}" >/dev/null
+  vault write auth/jwt-tenant-static/role/tenant-probe role_type=jwt user_claim=sub \
+    bound_subject=system:serviceaccount:default:vault-auth "${role_args[@]}" >/dev/null
+  echo "Tenant auth mounts enabled: kubernetes-tenant, jwt-tenant, jwt-tenant-static (issuer ${issuer}); tenant roles read secret-lab/tenant-probe only."
+}
+tenant_auth_disable() { # [<kubeconfig>]  disables the mounts; with a kubeconfig also removes the tenant-side reviewer objects
+  local m
+  for m in kubernetes-tenant jwt-tenant jwt-tenant-static; do
+    vault auth list -format=json | jq -e "has(\"${m}/\")" >/dev/null && vault auth disable "$m" >/dev/null || true
+  done
+  if [[ -n "${1:-}" ]]; then
+    kubectl --kubeconfig "$1" delete -f "${SECRETS_SCRIPT_DIR}/experiments/tenant-auth/reviewer.yaml" --ignore-not-found >/dev/null || true
+  fi
+  echo 'Tenant auth mounts disabled.'
+}
 case "$ACTION" in
   unseal) unseal ;;
   bootstrap)
@@ -73,7 +123,7 @@ case "$ACTION" in
     vault auth list -format=json | jq -e 'has("kubernetes/")' >/dev/null || vault auth enable kubernetes
     vault auth list -format=json | jq -e 'has("userpass/")' >/dev/null || vault auth enable userpass
     vault write auth/kubernetes/config kubernetes_host=https://kubernetes.default.svc:443 >/dev/null
-    for policy in operator eso vso trellis trellis-app; do
+    for policy in operator eso vso trellis trellis-app tenant-probe; do
       vault policy write "secret-lab-${policy}" "${SECRETS_SCRIPT_DIR}/vault/policies/${policy}.hcl" >/dev/null
     done
     for mode in eso vso; do
@@ -82,7 +132,7 @@ case "$ACTION" in
         "token_policies=secret-lab-${mode}" token_no_default_policy=true token_ttl=10m token_max_ttl=1h >/dev/null
     done
     # Application roles: <role>:<namespace>:<service account>:<policy>. The store role is
-    # what ESO logs in with; the app role is what the process itself may use (ADR-104 seam).
+    # what ESO logs in with; the app role is what the process itself may use (its documented command-based key source).
     for spec in trellis:trellis:vault-auth:secret-lab-trellis trellis-app:trellis:trellis:secret-lab-trellis-app; do
       IFS=: read -r role ns sa policy <<<"$spec"
       vault write "auth/kubernetes/role/${role}" "bound_service_account_names=${sa}" \
@@ -109,80 +159,19 @@ case "$ACTION" in
     echo 'Normal operator login saved (1h TTL, 4h maximum). Source scripts/secrets/vault-env.sh for the Vault CLI.' ;;
   cli) normal_token; vault "$@" ;;
   tenant-auth)
-    # Experiment (GW.2): a second cluster authenticates to this Vault the way a tenant would reach a
-    # platform Vault. Three mounts side by side so their operational differences can be measured:
-    #   kubernetes-tenant  TokenReview against the tenant API server (needs network reach + the tenant CA)
-    #   jwt-tenant         JWKS fetched from the tenant API server (needs reach; no TokenReview)
-    #   jwt-tenant-static  public keys copied once (no reach at all; no revocation before expiry)
-    # Root is used the way bootstrap uses it: mount and role administration only.
+    # Experiment: a second cluster authenticates to this Vault the way a tenant would reach a platform
+    # Vault. Three mounts side by side so their operational differences can be measured:
+    #   kubernetes-tenant  TokenReview against the tenant API server (needs reach + a tenant-issued reviewer token)
+    #   jwt-tenant         JWKS fetched from the tenant API server (needs reach at setup; keys cached afterwards)
+    #   jwt-tenant-static  public keys copied once (no reach at all; no revocation before token expiry)
+    # Root is used the way bootstrap uses it: mount and role administration only. The tenant roles
+    # read ONE purpose-only entry (secret-lab/tenant-probe), never an application's subtree.
     sub="${1:-}"; shift || true
     export VAULT_TOKEN="$(jq -r '.root_token' "${VAULT_STATE}/init.json")"
     case "$sub" in
-      enable)
-        kubeconfig="${1:?kubeconfig}"; api_url="${2:?tenant API URL reachable from the Vault pod}"
-        work="$(mktemp -d "${VAULT_STATE}/.tenant-auth.XXXXXX")"
-        kubectl --kubeconfig "$kubeconfig" config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d >"${work}/ca.pem"
-        kubectl --kubeconfig "$kubeconfig" get --raw /openid/v1/jwks >"${work}/jwks.json"
-        python3 - "${work}/jwks.json" >"${work}/pubkeys.pem" <<'PYX'
-import json, sys, base64
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import serialization
-def b64(s): return int.from_bytes(base64.urlsafe_b64decode(s + "=" * (-len(s) % 4)), "big")
-for k in json.load(open(sys.argv[1]))["keys"]:
-    pub = rsa.RSAPublicNumbers(b64(k["e"]), b64(k["n"])).public_key()
-    sys.stdout.write(pub.public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode())
-PYX
-        issuer="$(kubectl --kubeconfig "$kubeconfig" get --raw /.well-known/openid-configuration | jq -r .issuer)"
-        vault auth list -format=json | jq -e 'has("kubernetes-tenant/")' >/dev/null || vault auth enable -path=kubernetes-tenant kubernetes
-        # A Vault outside the tenant has no identity the tenant API server accepts for TokenReview, and a
-        # client token bound to audience "vault" is not a bearer token there either. The tenant therefore
-        # issues a long-lived reviewer token that this Vault must hold: the key-distribution cost of this method.
-        kubectl --kubeconfig "$kubeconfig" apply -f - >/dev/null <<'YAML'
-apiVersion: v1
-kind: ServiceAccount
-metadata: {name: vault-token-reviewer, namespace: kube-system}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata: {name: vault-token-reviewer}
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: system:auth-delegator}
-subjects: [{kind: ServiceAccount, name: vault-token-reviewer, namespace: kube-system}]
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: vault-token-reviewer
-  namespace: kube-system
-  annotations: {kubernetes.io/service-account.name: vault-token-reviewer}
-type: kubernetes.io/service-account-token
-YAML
-        for attempt in {1..20}; do
-          kubectl --kubeconfig "$kubeconfig" -n kube-system get secret vault-token-reviewer -o go-template='{{index .data "token"}}' 2>/dev/null | grep -q . && break; sleep 1
-        done
-        kubectl --kubeconfig "$kubeconfig" -n kube-system get secret vault-token-reviewer -o go-template='{{index .data "token"}}' | base64 -d |
-          vault write auth/kubernetes-tenant/config "kubernetes_host=${api_url}" "kubernetes_ca_cert=@${work}/ca.pem" \
-            disable_local_ca_jwt=true token_reviewer_jwt=- >/dev/null
-        vault write auth/kubernetes-tenant/role/tenant-trellis bound_service_account_names=vault-auth \
-          bound_service_account_namespaces=default audience=vault token_policies=secret-lab-trellis \
-          token_no_default_policy=true token_ttl=10m token_max_ttl=1h >/dev/null
-        vault auth list -format=json | jq -e 'has("jwt-tenant/")' >/dev/null || vault auth enable -path=jwt-tenant jwt
-        vault write auth/jwt-tenant/config "jwks_url=${api_url}/openid/v1/jwks" "jwks_ca_pem=@${work}/ca.pem" "bound_issuer=${issuer}" >/dev/null
-        vault write auth/jwt-tenant/role/tenant-trellis role_type=jwt user_claim=sub bound_audiences=vault \
-          bound_subject=system:serviceaccount:default:vault-auth token_policies=secret-lab-trellis \
-          token_no_default_policy=true token_ttl=10m token_max_ttl=1h >/dev/null
-        vault auth list -format=json | jq -e 'has("jwt-tenant-static/")' >/dev/null || vault auth enable -path=jwt-tenant-static jwt
-        vault write auth/jwt-tenant-static/config "jwt_validation_pubkeys=@${work}/pubkeys.pem" "bound_issuer=${issuer}" >/dev/null
-        vault write auth/jwt-tenant-static/role/tenant-trellis role_type=jwt user_claim=sub bound_audiences=vault \
-          bound_subject=system:serviceaccount:default:vault-auth token_policies=secret-lab-trellis \
-          token_no_default_policy=true token_ttl=10m token_max_ttl=1h >/dev/null
-        rm -rf "$work"
-        echo "Tenant auth mounts enabled: kubernetes-tenant, jwt-tenant, jwt-tenant-static (issuer ${issuer})." ;;
-      disable)
-        for m in kubernetes-tenant jwt-tenant jwt-tenant-static; do
-          vault auth list -format=json | jq -e "has(\"${m}/\")" >/dev/null && vault auth disable "$m" >/dev/null || true
-        done
-        echo 'Tenant auth mounts disabled.' ;;
-      *) echo 'Usage: vault.sh tenant-auth enable <kubeconfig> <api-url> | disable' >&2; exit 2 ;;
+      enable) tenant_auth_enable "${1:?kubeconfig}" "${2:?tenant API URL reachable from the Vault pod}" ;;
+      disable) tenant_auth_disable "${1:-}" ;;
+      *) echo 'Usage: vault.sh tenant-auth enable <kubeconfig> <api-url> | disable [<kubeconfig>]' >&2; exit 2 ;;
     esac
     unset VAULT_TOKEN ;;
   snapshot)

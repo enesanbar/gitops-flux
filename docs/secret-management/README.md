@@ -143,7 +143,7 @@ vault login -method=userpass username=operator
 ```
 
 `vault/init.json` contains the emergency root token and the Shamir unseal key.
-Only explicit `bootstrap` and `snapshot` use root. This local single-custodian
+Only explicit `bootstrap`, `snapshot` and the `tenant-auth` experiment helper use root. This local single-custodian
 setup uses one key/share; it does not pretend to offer multi-person custody.
 Production needs an independently chosen HA, seal/KMS, identity and custody plan.
 Never copy these development credentials into another environment.
@@ -153,7 +153,11 @@ Policies are reviewed files in `scripts/secrets/vault/policies/`. Re-run
 uses Vault's projected service-account token as the TokenReview identity, with
 the chart's `system:auth-delegator` binding. Client tokens use audience `vault`,
 specific namespace/SA bindings, 10-minute TTL and 1-hour maximum. Vault refreshes
-its own projected reviewer token; no long-lived Kubernetes reviewer Secret exists.
+its own projected reviewer token; no long-lived Kubernetes reviewer Secret exists in this
+cluster. The external-tenant experiment (`vault.sh tenant-auth`, see
+`scripts/secrets/experiments/README.md`) is the documented exception: a Vault outside a cluster has
+no identity that cluster accepts for TokenReview, so the tenant issues a long-lived reviewer token
+that Vault holds for as long as the experiment's mount exists.
 
 ## ESO
 
@@ -162,6 +166,16 @@ its own projected reviewer token; no long-lived Kubernetes reviewer Secret exist
 `vault-auth` SA via the accompanying Role/RoleBinding. Vault role `eso` may read
 only `secret-lab/{data,metadata}/eso/*`. CA trust is the local public `vault-ca`
 ConfigMap, restored by `prepare-local.sh`.
+
+`components/trellis-secrets/` applies the same shape to an application namespace: `SecretStore`
+`trellis/vault` with Vault role `trellis` (policy `secret-lab-trellis`, read-only on
+`secret-lab/{data,metadata}/trellis/*`), a `vault-ca` ConfigMap that `prepare-local.sh` restores
+there too, and two ExternalSecrets annotated never to be pruned, because `creationPolicy: Owner`
+would garbage-collect the running application's Secret along with a pruned ExternalSecret
+(`deletionPolicy: Retain` only covers a vanished backend entry). Role `trellis-app` (policy
+`secret-lab-trellis-app`, the key-encryption-key entry only) is bound to the application's own
+ServiceAccount for the command-based key-source experiment under
+`scripts/secrets/experiments/kek-command/`.
 
 Working example (`components/secret-example-eso/secret.yaml`):
 
