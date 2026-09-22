@@ -18,6 +18,13 @@ what one hands-on experiment needed, kept so the measurements recorded with it c
   `vault-lab` carrying this machine's public Vault CA, and the `cm-leaf` Certificate in
   `secret-lab-pki`. Run `vault.sh pki` first (the mount, role and policies), then this script; the
   `secret-lab-pki` component itself needs neither. `delete` revokes the token and removes all three.
+- `parity/` — the operator-version parity gate: a throwaway kind cluster on this lab's Docker
+  network running the External Secrets Operator at the version an older fleet runs, so the reference
+  manifests can be replayed against the same Vault and compared. `parity-gate.sh up|down` builds and
+  destroys it (cluster, a NodePort on the lab Vault, the tenant auth mounts and the `parity` role);
+  `parity-checks.sh` is the behavioural half. The reference ExternalSecrets are applied byte-for-byte
+  and only ever read, because their paths hold the running lab application's key-encryption key; the
+  mutable half reads `secret-lab/parity/*`, seeded and destroyed with the cluster.
 - `matrix/` — the rotation and failure/recovery rows, one script per row group, each printing
   statuses, key names, lengths and timings only. `lib.sh` is sourced by the others; export
   `SECRET_STATE_DIR`, and for `r1-backend-unavailable.sh` also `S5` (the release values file) and

@@ -9,8 +9,8 @@ export VAULT_CACERT="${VAULT_STATE}/ca.crt"
 export VAULT_TLS_SERVER_NAME=vault.vault.svc
 unset VAULT_TOKEN VAULT_NAMESPACE VAULT_SKIP_VERIFY
 ACTION="${1:-}"; shift || true
-case "$ACTION" in bootstrap|unseal|login|cli|snapshot|tenant-auth|pki|aws) ;; *)
-  echo 'Usage: vault.sh bootstrap|unseal|login|cli <vault args...>|snapshot|tenant-auth enable <kubeconfig> <api-url>|disable [<kubeconfig>]|pki|aws' >&2; exit 2;; esac
+case "$ACTION" in bootstrap|unseal|login|cli|snapshot|tenant-auth|pki|aws|parity) ;; *)
+  echo 'Usage: vault.sh bootstrap|unseal|login|cli <vault args...>|snapshot|tenant-auth enable <kubeconfig> <api-url>|disable [<kubeconfig>]|pki|aws|parity enable|disable' >&2; exit 2;; esac
 test -s "$VAULT_CACERT" || { echo 'Run prepare-local.sh first.' >&2; exit 1; }
 # Pod forwarding works even while sealed; the normal Service/UI stays unready.
 # Refuse an occupied port, rather than talking to an unknown existing forward.
@@ -208,6 +208,26 @@ case "$ACTION" in
       token_no_default_policy=true token_ttl=10m token_max_ttl=1h >/dev/null
     unset VAULT_TOKEN
     echo 'Lab PKI ready: mount pki-lab, role lab, Kubernetes-auth roles pki-eso and pki-cert-manager.' ;;
+  parity)
+    # Experiment: the ESO 0.20.3 parity gate's own identity on the tenant auth mount. Root is used
+    # for policy and role administration only, as in pki and aws; the gate itself runs unprivileged.
+    export VAULT_TOKEN="$(jq -r '.root_token' "${VAULT_STATE}/init.json")"
+    case "${1:-enable}" in
+      enable)
+        vault auth list -format=json | jq -e 'has("kubernetes-tenant/")' >/dev/null || \
+          { echo 'Run tenant-auth enable first; the parity role lives on that mount.' >&2; exit 1; }
+        vault policy write secret-lab-parity "${SECRETS_SCRIPT_DIR}/vault/policies/parity.hcl" >/dev/null
+        vault write auth/kubernetes-tenant/role/parity bound_service_account_names=vault-auth \
+          bound_service_account_namespaces=trellis audience=vault token_policies=secret-lab-parity \
+          token_no_default_policy=true token_ttl=20m token_max_ttl=1h >/dev/null
+        echo 'Parity role ready on auth/kubernetes-tenant (trellis/vault-auth -> secret-lab-parity).' ;;
+      disable)
+        vault delete auth/kubernetes-tenant/role/parity >/dev/null 2>&1 || true
+        vault policy delete secret-lab-parity >/dev/null 2>&1 || true
+        echo 'Parity role and policy removed.' ;;
+      *) echo 'Usage: vault.sh parity enable|disable' >&2; exit 2 ;;
+    esac
+    unset VAULT_TOKEN ;;
   tenant-auth)
     # Experiment: a second cluster authenticates to this Vault the way a tenant would reach a platform
     # Vault. Three mounts side by side so their operational differences can be measured:
