@@ -39,7 +39,9 @@ spec:
   target:
     name: aws-sts-credentials
     creationPolicy: Owner
-    deletionPolicy: Delete
+    # Retain: if the generator fails, expired credentials with a loud ExpiredTokenException are a
+    # failure this track has measured and understands; a store with no credentials at all is not.
+    deletionPolicy: Retain
     template:
       engineVersion: v2
       data:

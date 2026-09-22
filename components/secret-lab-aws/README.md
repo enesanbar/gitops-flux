@@ -1,4 +1,4 @@
-# secret-lab-aws (awaiting credentials)
+# secret-lab-aws
 
 The same logical application secrets as `trellis-secrets`, delivered from AWS Systems Manager
 Parameter Store, two authentication shapes side by side:
@@ -12,5 +12,6 @@ Parameter Store, two authentication shapes side by side:
   Secret is refreshed well inside the STS lifetime.
 
 Parameter layout follows `<environment>-<cluster>/<application>/<name>`; the lab uses
-`/lab-cluster00/`. The region is the estate's Parameter Store region. The Flux
-Kustomization was suspended until the credentials existed.
+`/lab-cluster00/`. The lab uses `us-west-1`. The Kustomization reconciles once
+`aws-credentials.sh import` and `apply` have put a scoped key in place; without it nothing here can
+sync, and `vault.sh aws` refuses to configure the minting engine.
