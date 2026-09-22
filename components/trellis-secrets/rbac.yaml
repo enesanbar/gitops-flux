@@ -1,0 +1,33 @@
+# The identity ESO presents to Vault for this namespace. Its token is minted on demand
+# through the TokenRequest API (audience "vault", short-lived), never mounted into a pod.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault-auth
+  namespace: trellis
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: eso-vault-token
+  namespace: trellis
+rules:
+- apiGroups: ['']
+  resources: [serviceaccounts/token]
+  resourceNames: [vault-auth]
+  verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: eso-vault-token
+  namespace: trellis
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: eso-vault-token
+subjects:
+- kind: ServiceAccount
+  name: external-secrets
+  namespace: external-secrets
