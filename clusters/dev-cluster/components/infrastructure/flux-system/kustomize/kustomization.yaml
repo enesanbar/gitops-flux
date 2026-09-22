@@ -49,3 +49,4 @@ resources:
 - secret-example-vso.yaml
 - secret-lab-pki.yaml
 - secret-lab-aws.yaml
+- reloader.yaml
