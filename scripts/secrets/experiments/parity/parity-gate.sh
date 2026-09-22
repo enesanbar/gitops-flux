@@ -43,7 +43,9 @@ refreshed() { kp -n "$1" get externalsecret "$2" -o jsonpath='{.status.refreshTi
 # changed, printed with the diff that proves nothing else moved (two lines out, two in).
 adapt_store() {
   local out; out=$(sed -e 's|mountPath: kubernetes$|mountPath: kubernetes-tenant|' -e "s|role: $2\$|role: $3|" "$1")
-  local changed; changed=$(diff "$1" <(printf '%s\n' "$out") | grep -c '^[<>]')
+  # diff exits 1 when the files differ, which under pipefail would fail the assignment and let set -e
+  # end the run with no message; the count is what is being asserted, not diff's status.
+  local changed; changed=$( { diff "$1" <(printf '%s\n' "$out") || true; } | grep -c '^[<>]' || true)
   [ "$changed" = 4 ] || { echo "adapting $1 changed ${changed} lines, not 4; refusing to call it the reference" >&2; return 1; }
   echo "--- $(basename "$1"), adapted for this cluster (asserted: only these lines differ) ---" >&2
   diff "$1" <(printf '%s\n' "$out") >&2 || true

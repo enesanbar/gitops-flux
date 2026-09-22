@@ -30,7 +30,8 @@ what one hands-on experiment needed, kept so the measurements recorded with it c
   post-renderer would carry) and removes, then restores, the namespaced Role to show the store
   depends on it. `parity-gate.sh down` removes everything `up` created, and `up` runs it itself on
   any failure. The replay copies the lab application's live key-encryption key into the
-  throwaway's etcd for as long as it exists.
+  throwaway's etcd for as long as it exists. The parity scripts use the Python `yq` (the jq wrapper,
+  `yq -y`/`yq -c`), not the Go implementation of the same name.
 - `matrix/` — the rotation and failure/recovery rows, one script per row group, each printing
   statuses, key names, lengths and timings only. `lib.sh` is sourced by the others; export
   `SECRET_STATE_DIR`, and for `r1-backend-unavailable.sh` also `S5` (the release values file) and
@@ -42,4 +43,8 @@ what one hands-on experiment needed, kept so the measurements recorded with it c
   narrowed) and patch cluster-wide CoreDNS. Run them against a lab and nothing else. Timing note: a
   bare `$(el)` next to a `$(waitfor …)` on one line reports when the wait BEGAN, because bash expands
   command substitutions left to right; `waitfor` therefore stamps its own return as `@+Ns`, and that
-  trailing stamp is the measurement.
+  trailing stamp is the measurement. Two rows answer questions the conventions rest on rather than
+  failure modes: `r16-pinned-key-under-reloader.sh` (a version-pinned key restarts nothing under the
+  reloader; an unpinned neighbour in the same Secret does) and `r17-operator-token-secret.sh` (whether
+  the operator can obtain a token for any ServiceAccount through a service-account-token Secret, in a
+  scratch namespace, printing the token's length only).
