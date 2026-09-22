@@ -18,3 +18,9 @@ what one hands-on experiment needed, kept so the measurements recorded with it c
   `vault-lab` carrying this machine's public Vault CA, and the `cm-leaf` Certificate in
   `secret-lab-pki`. Run `vault.sh pki` first (the mount, role and policies), then this script; the
   `secret-lab-pki` component itself needs neither. `delete` revokes the token and removes all three.
+- `matrix/` — the rotation and failure/recovery rows, one script per row group, each printing
+  statuses, key names, lengths and timings only. `lib.sh` is sourced by the others; export
+  `SECRET_STATE_DIR`, and for `r1-backend-unavailable.sh` also `S5` (the release values file) and
+  `CH` (the chart directory). Rows that need drift suspend the Flux Kustomization they touch and
+  resume it; `r-aws-unreachable.sh` black-holes the SSM endpoint in CoreDNS and restores the live
+  object afterwards.
