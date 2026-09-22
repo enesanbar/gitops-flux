@@ -9,4 +9,4 @@ $K -n trellis rollout status deploy/trellis-api --timeout=240s >/dev/null 2>&1 &
 $K -n trellis rollout status deploy/trellis-worker --timeout=240s >/dev/null 2>&1 && echo "$(el) worker rollout COMPLETE during the outage" || echo "$(el) worker rollout did NOT complete"
 echo "$(el) ready=$(ready) api pods:"; pods api | sed 's/^/   /'
 echo "$(el) es=$(es trellis trellis-secrets) (stale but present) Secret KEK=$(klen trellis trellis-secrets TRELLIS_KEK)"
-echo "-- unseal at $(now)"; T0=$(date -u +%s); "$V" unseal | tail -1; echo "[wait began $(el)] store -> $(waitfor 400 'store' Valid)"; echo "$(el) trellis-secrets -> $(waitfor 400 'es trellis trellis-secrets' SecretSynced)"; echo "R1b end=$(now)"
+echo "-- unseal at $(now)"; T0=$(date -u +%s); "$V" unseal | tail -1; echo "[wait began $(el)] store -> $(waitfor 400 'store' Valid)"; echo "[wait began $(el)] trellis-secrets -> $(waitfor 400 'es trellis trellis-secrets' SecretSynced)"; echo "R1b end=$(now)"

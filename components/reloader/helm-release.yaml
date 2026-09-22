@@ -7,10 +7,15 @@
 # That is the price of the capability, and on a tenant cluster it is the reason to scope it by
 # namespace rather than run it globally.
 #
-# reloadStrategy: the chart's default writes a fingerprint of the watched Secret's CONTENT into the
-# pod template as a STAKATER_<NAME>_SECRET environment variable, so a hash of key material (a KEK
-# included) becomes readable to anyone who can read a Deployment. `annotations` moves the trigger to
-# a pod-template annotation instead, which is why it is set here.
+# reloadStrategy, and what it does NOT buy: the chart's default writes a fingerprint of the watched
+# Secret's CONTENT into the pod template as a STAKATER_<NAME>_SECRET environment variable. Setting
+# `annotations` MOVES that fingerprint to a `reloader.stakater.com/last-reloaded-from` pod-template
+# annotation whose `hash` field is the same content digest (measured: 40 hex characters, identical
+# across every Deployment consuming the Secret). It does not remove it, and it cannot: a restart
+# trigger has to be able to tell that the content changed. So anyone who can read a Deployment can
+# read a digest of the Secret, a KEK included, under either strategy. The annotation is the lesser
+# evil because it is not handed to the process, but the exposure is the mechanism's, not the
+# strategy's, and a workload whose key must not be fingerprinted at all cannot use a reloader.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:

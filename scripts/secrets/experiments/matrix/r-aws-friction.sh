@@ -17,20 +17,15 @@ import pathlib, sys
 p = pathlib.Path("components/secret-lab-aws/external-secrets.yaml"); t = p.read_text()
 if "TRELLIS_EMBEDDING_API_KEY" in t:
     print("   already present, leaving the file alone"); sys.exit(0)
-old = """  - secretKey: TRELLIS_LLM_API_KEY
-    remoteRef:
-      key: /lab-cluster00/trellis/llm
----
-# Single-parameter mapping."""
-assert t.count(old) == 1
-p.write_text(t.replace(old, """  - secretKey: TRELLIS_LLM_API_KEY
-    remoteRef:
-      key: /lab-cluster00/trellis/llm
-  - secretKey: TRELLIS_EMBEDDING_API_KEY
-    remoteRef:
-      key: /lab-cluster00/trellis/embedding
----
-# Single-parameter mapping."""))
+# Anchor INSIDE the named ExternalSecret. The first version anchored on "the LLM entry followed by
+# the next document", which matched the vault-minted twin while the walk waited on the static one:
+# it read exactly like a delivery failure and was not.
+i = t.index("name: trellis-secrets-static"); j = t.index("---", i)
+block = t[i:j]
+anchor = "  - secretKey: TRELLIS_LLM_API_KEY\n    remoteRef:\n      key: /lab-cluster00/trellis/llm\n"
+assert block.count(anchor) == 1, "anchor not found inside trellis-secrets-static"
+add = "  - secretKey: TRELLIS_EMBEDDING_API_KEY\n    remoteRef:\n      key: /lab-cluster00/trellis/embedding\n"
+p.write_text(t[:i] + block.replace(anchor, anchor + add) + t[j:])
 PY
 kubectl kustomize components/secret-lab-aws >/dev/null && echo "   render ok $(el)"
 echo "step 3 (dev): commit and push — NOT done by this script (a measurement must not write shared history)"
