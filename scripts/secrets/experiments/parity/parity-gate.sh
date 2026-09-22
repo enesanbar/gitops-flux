@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
-# Parity gate: do the reference manifests behave the same on the ESO version a tenant
-# cluster runs (0.20.3) as on the lab's 2.11.0?
+# Parity gate: do the reference manifests behave the same on ESO 0.20.3 as on the lab's 2.11.0?
 #
-# A throwaway kind cluster joins the lab's docker network, installs ESO 0.20.3 with the
-# fleet's value shape, and reaches the lab Vault as an outside cluster would. Two sets of
-# ExternalSecrets run side by side, and the split is deliberate:
-#   - the REFERENCE set is applied byte-for-byte from components/trellis-secrets/ and is
-#     only ever read, because those paths hold the lab Trellis's live KEK: rotating one to
-#     measure a refresh would make the running lab's encrypted data unreadable.
-#   - the BEHAVIOUR set reads secret-lab/parity/* and is the only thing this script mutates.
-# Only the SecretStore is adapted (auth mount and role), because the lab's own "kubernetes"
-# mount reviews tokens from the lab's API server, not this cluster's; parity-store.diff
-# records exactly what changed.
-# Run from a worktree with SECRET_STATE_DIR pointing at the main checkout's private custody:
-# the Vault helpers resolve it relative to the repository root, and a worktree has no .local/.
+# A throwaway kind cluster joins the lab's Docker network, installs chart 0.20.3 with the lab's own
+# values, and reaches the lab Vault as a cluster outside it would. Subcommands:
+#   up      build the throwaway, replay components/trellis-secrets/ on it byte-for-byte (only the
+#           SecretStore's auth mount and role differ), and provision secret-lab-eso for the
+#           behaviour checks. Replaying the reference copies the lab application's live
+#           key-encryption key into the throwaway's etcd for as long as it exists: acceptable for a
+#           cluster on this machine's Docker network that lives for minutes, and the reason `down`
+#           is not optional.
+#   remedy  the chart-0.20.3 RBAC question, two-sided: strip the controller's cluster-wide
+#           serviceaccounts/token rule with the patch a Flux postRenderer would carry, then prove
+#           the namespaced Role is what keeps the store working by removing it and watching it fail.
+#   down    remove everything `up` created, and only that.
+# The behaviour checks themselves are parity-checks.sh, run once against each cluster.
+#
+# Run from a worktree with SECRET_STATE_DIR pointing at the main checkout's private custody: the
+# Vault helpers resolve it relative to the repository root, and a worktree has no .local/.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,37 +27,52 @@ LAB_NETWORK=kind-local-dind-cluster
 ESO_VERSION=0.20.3
 STATE="${PARITY_STATE:-${TMPDIR:-/tmp}/eso-parity}"
 KCFG="${STATE}/kubeconfig"
-mkdir -p "$STATE"
 
-# Every call is pinned: kind writes current-context into ~/.kube/config, whose default
-# context is a real tenant cluster.
+# Every call names its kubeconfig or context: the machine's default context may be a real cluster,
+# and kind is always handed --kubeconfig so it never writes the default file.
 kp() { kubectl --kubeconfig "$KCFG" "$@"; }
 kl() { kubectl --context "$LAB_CONTEXT" "$@"; }
-vault_cli() { "${REPO}/scripts/secrets/vault.sh" cli "$@"; }
-el() { echo "+$(( $(date +%s) - T0 ))s"; }
+vsh() { "${REPO}/scripts/secrets/vault.sh" "$@"; }
+T0=$(date +%s); el() { echo "+$(( $(date +%s) - T0 ))s"; }
+waitfor() { local max=$1 exp=$3 i v; for i in $(seq 1 $((max/5))); do v=$(eval "$2"); [ "$v" = "$exp" ] && { echo "$v @$(el)"; return 0; }; sleep 5; done; echo "${v:-empty}(timeout) @$(el)"; return 1; }
+esr() { kp -n "$1" get externalsecret "$2" -o jsonpath='{.status.conditions[0].reason}' 2>/dev/null; }
+keys() { kp -n "$1" get secret "$2" -o go-template='{{range $k,$v := .data}}{{$k}}({{len $v}}) {{end}}' 2>/dev/null; }
+sync() { kp -n "$1" annotate externalsecret "$2" force-sync="$(date +%s%N)" --overwrite >/dev/null; }
+refreshed() { kp -n "$1" get externalsecret "$2" -o jsonpath='{.status.refreshTime}' 2>/dev/null; }
+can_mint() { kp auth can-i create "serviceaccounts${2:+/$2}" --subresource=token -n "$1" \
+  --as=system:serviceaccount:external-secrets:external-secrets 2>/dev/null || true; }
 
 up() {
-  T0=$(date +%s)
+  mkdir -p "$STATE"
+  # The three tenant auth mounts belong to the tenant-auth experiment. Repointing them at this
+  # throwaway would silently break that experiment, and disabling them afterwards would destroy it.
+  if vsh cli auth list -format=json 2>/dev/null | jq -e 'has("kubernetes-tenant/") or has("jwt-tenant/") or has("jwt-tenant-static/")' >/dev/null; then
+    echo "The tenant auth mounts are already enabled (the tenant-auth experiment owns them)." >&2
+    echo "Finish that experiment and run 'vault.sh tenant-auth disable' first." >&2; exit 1
+  fi
+  # A half-built gate leaves the lab Vault on a NodePort of the shared Docker network, so any exit
+  # before the end of up tears down. An EXIT trap with a flag rather than an ERR trap: ERR does not
+  # fire inside a function without errtrace, and with errtrace it would also fire inside the polling
+  # command substitutions, tearing the cluster down over a lookup that simply had no answer yet.
+  UP_DONE=0
+  trap '[ "$UP_DONE" = 1 ] || { echo "[$(el)] up did not finish; tearing down what it created" >&2; down; }' EXIT
+
   echo "[$(el)] creating throwaway kind cluster ${CLUSTER} on the lab network"
   kind get clusters 2>/dev/null | grep -qx "$CLUSTER" || \
     KIND_EXPERIMENTAL_DOCKER_NETWORK="$LAB_NETWORK" kind create cluster --name "$CLUSTER" --kubeconfig "$KCFG" --wait 120s
   kind export kubeconfig --name "$CLUSTER" --kubeconfig "$KCFG" >/dev/null
 
-  local node_ip lab_ip
+  local node_ip lab_ip nodeport
   node_ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${CLUSTER}-control-plane")"
   lab_ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${LAB_CONTEXT#kind-}-control-plane")"
-  echo "[$(el)] parity node ${node_ip}, lab node ${lab_ip}"
-
-  echo "[$(el)] exposing the lab Vault on a NodePort for the parity cluster"
   kl -n vault get svc vault-nodeport >/dev/null 2>&1 || \
     kl -n vault expose svc vault --name=vault-nodeport --type=NodePort --port=8200 --target-port=8200 >/dev/null
-  local nodeport
   nodeport="$(kl -n vault get svc vault-nodeport -o jsonpath='{.spec.ports[0].nodePort}')"
-  echo "[$(el)] lab Vault reachable at ${lab_ip}:${nodeport}"
+  echo "[$(el)] parity node ${node_ip}; lab Vault at ${lab_ip}:${nodeport}"
 
   # A selector-less Service plus a hand-written EndpointSlice makes the lab Vault answer at
-  # vault.vault.svc:8200 inside this cluster, so the reference SecretStore's server URL - and
-  # the SANs on the lab Vault's certificate - need no change at all.
+  # vault.vault.svc:8200 here, so the reference store's server URL and the SANs on the lab Vault's
+  # certificate need no change at all.
   kp get ns vault >/dev/null 2>&1 || kp create namespace vault >/dev/null
   cat <<YAML | kp apply -f - >/dev/null
 apiVersion: v1
@@ -71,77 +89,105 @@ ports: [{name: https, port: ${nodeport}, protocol: TCP}]
 endpoints: [{addresses: ["${lab_ip}"], conditions: {ready: true}}]
 YAML
 
-  echo "[$(el)] installing external-secrets ${ESO_VERSION} with the fleet's value shape"
-  helm repo add external-secrets https://charts.external-secrets.io >/dev/null 2>&1 || true
-  helm --kubeconfig "$KCFG" upgrade --install external-secrets external-secrets/external-secrets \
-    --version "$ESO_VERSION" --namespace external-secrets --create-namespace --wait --timeout 5m \
-    -f "${HERE}/eso-values.yaml" >/dev/null
-  kp -n external-secrets get deploy -o wide
+  echo "[$(el)] installing external-secrets ${ESO_VERSION} with the lab's values"
+  helm --kubeconfig "$KCFG" upgrade --install external-secrets external-secrets \
+    --repo https://charts.external-secrets.io --version "$ESO_VERSION" \
+    --namespace external-secrets --create-namespace --wait --timeout 5m -f "${HERE}/eso-values.yaml" >/dev/null
+  kp -n external-secrets get deploy external-secrets -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
 
-  # jwt-tenant configures itself from jwks_url, and Vault presents no credential when it fetches
-  # that URL, so the API server must serve OIDC discovery to unauthenticated callers. Kubernetes
-  # binds system:service-account-issuer-discovery to authenticated service accounts only, which is
-  # why the mount fails on a stock cluster. Granting it here is a throwaway-only shortcut and is
-  # itself the finding: jwks_url is not usable against a tenant that keeps discovery closed, so
-  # jwt-tenant-static (public keys copied once) is the shape that survives a real tenant.
+  # jwt-tenant configures itself from jwks_url, and Vault presents no credential when it fetches it,
+  # so the API server must serve OIDC discovery to unauthenticated callers. Kubernetes binds
+  # system:service-account-issuer-discovery to authenticated service accounts only. Granting it is a
+  # throwaway-only shortcut, and is itself the finding: jwks_url is unusable against a cluster that
+  # keeps discovery closed, which leaves copied public keys as the JWT shape that survives one.
   kp create clusterrolebinding oidc-discovery-unauthenticated \
     --clusterrole=system:service-account-issuer-discovery --group=system:unauthenticated \
     --dry-run=client -o yaml | kp apply -f - >/dev/null
 
-  echo "[$(el)] enabling tenant auth mounts on the lab Vault for this cluster"
-  "${REPO}/scripts/secrets/vault.sh" tenant-auth enable "$KCFG" "https://${node_ip}:6443"
-  "${REPO}/scripts/secrets/vault.sh" parity enable
+  echo "[$(el)] tenant auth mounts and the parity roles on the lab Vault"
+  vsh tenant-auth enable "$KCFG" "https://${node_ip}:6443"
+  touch "${STATE}/created-tenant-auth"
+  vsh parity enable
 
-  echo "[$(el)] seeding the mutable parity subtree (never the live trellis/ paths)"
-  seed_parity
+  local ca="${STATE}/vault-ca.crt"
+  kl -n trellis get cm vault-ca -o jsonpath='{.data.ca\.crt}' > "$ca"
 
-  echo "[$(el)] applying the reference manifests"
+  echo "[$(el)] replaying the reference manifests"
   kp get ns trellis >/dev/null 2>&1 || kp create namespace trellis >/dev/null
-  kl -n trellis get cm vault-ca -o jsonpath='{.data.ca\.crt}' > "${STATE}/vault-ca.crt"
-  kp -n trellis create configmap vault-ca --from-file=ca.crt="${STATE}/vault-ca.crt" --dry-run=client -o yaml | kp apply -f - >/dev/null
+  kp -n trellis create configmap vault-ca --from-file=ca.crt="$ca" --dry-run=client -o yaml | kp apply -f - >/dev/null
   kp apply --validate=strict -f "${REPO}/components/trellis-secrets/rbac.yaml" >/dev/null
   kp apply --validate=strict -f "${HERE}/parity-store.yaml" >/dev/null
-  kp apply --validate=strict -f "${REPO}/components/trellis-secrets/external-secrets.yaml"
-  kp apply --validate=strict -f "${HERE}/parity-behaviour.yaml"
+  kp apply --validate=strict -f "${REPO}/components/trellis-secrets/external-secrets.yaml" >/dev/null
+  echo "--- reference SecretStore, as adapted for this cluster (the only change) ---"
+  diff -u "${REPO}/components/trellis-secrets/secret-store.yaml" "${HERE}/parity-store.yaml" || true
 
-  diff -u "${REPO}/components/trellis-secrets/secret-store.yaml" "${HERE}/parity-store.yaml" \
-    > "${STATE}/parity-store.diff" || true
-  echo "[$(el)] SecretStore adaptation recorded in ${STATE}/parity-store.diff"
+  echo "[$(el)] provisioning secret-lab-eso for the behaviour checks, identity copied from components/secret-stores/"
+  yq -y 'select(.metadata.namespace=="secret-lab-eso" or .metadata.name=="secret-lab-eso")' \
+    "${REPO}/components/secret-stores/namespaces.yaml" | kp apply --validate=strict -f - >/dev/null
+  kp -n secret-lab-eso create configmap vault-ca --from-file=ca.crt="$ca" --dry-run=client -o yaml | kp apply -f - >/dev/null
+  sed -e 's|mountPath: kubernetes$|mountPath: kubernetes-tenant|' -e 's|role: eso$|role: parity-behaviour|' \
+    "${REPO}/components/secret-stores/eso-vault.yaml" | kp apply --validate=strict -f - >/dev/null
+  echo "--- behaviour SecretStore, as adapted for this cluster ---"
+  diff -u "${REPO}/components/secret-stores/eso-vault.yaml" \
+    <(sed -e 's|mountPath: kubernetes$|mountPath: kubernetes-tenant|' -e 's|role: eso$|role: parity-behaviour|' \
+      "${REPO}/components/secret-stores/eso-vault.yaml") || true
+
+  echo "[$(el)] reference set on ${ESO_VERSION}"
+  local n
+  for n in trellis-secrets trellis-tls-eso; do
+    echo "   ${n}: $(waitfor 180 "esr trellis ${n}" SecretSynced) type=$(kp -n trellis get secret "$n" -o jsonpath='{.type}') keys=$(keys trellis "$n")"
+  done
+  UP_DONE=1
+  echo "[$(el)] up complete; next: parity-checks.sh against both clusters, then remedy, then down"
 }
 
-seed_parity() {
-  # Shapes mirror the reference exactly; the values are generated here and used nowhere else.
-  vault_cli kv put secret-lab/parity/kek TRELLIS_KEK="$(openssl rand -base64 32 | tr -d '\n')" >/dev/null
-  vault_cli kv put secret-lab/parity/service-token TRELLIS_SERVICE_TOKEN="$(openssl rand -hex 16 | tr -d '\n')" >/dev/null
-  vault_cli kv put secret-lab/parity/llm TRELLIS_LLM_API_KEY="sk-parity-$(openssl rand -hex 8 | tr -d '\n')" >/dev/null
-  vault_cli kv put secret-lab/parity/embedding TRELLIS_EMBEDDING_API_KEY="sk-parity-$(openssl rand -hex 8 | tr -d '\n')" >/dev/null
-  local crt key
-  crt="$(kl -n vault get secret vault-server-tls -o go-template='{{index .data "tls.crt"}}' | base64 -d)"
-  key="$(openssl genrsa 2048 2>/dev/null)"
-  vault_cli kv put secret-lab/parity/tls tls.crt="$crt" tls.key="$key" >/dev/null
-  vault_cli kv put secret-lab/parity/composed A=alpha B=bravo C=charlie >/dev/null
+remedy() {
+  local fails=0 began
+  ok() { echo "   PASS $*"; }; bad() { echo "   FAIL $*"; fails=$((fails+1)); }
+  echo "=== RBAC remedy on ${ESO_VERSION}, $(date -u +%FT%TZ) ==="
+  echo "-- R0 as installed"
+  [ "$(can_mint kube-system)" = yes ] && ok "operator may mint a token for any ServiceAccount (kube-system: yes)" \
+                                      || bad "expected the chart's cluster-wide grant to be present"
+  echo "-- R1 strip the cluster-wide rule with the postRenderer patch"
+  kp patch clusterrole external-secrets-controller --type=json -p "$(yq -c . "${HERE}/strip-token-rule.patch.yaml")" >/dev/null
+  [ "$(can_mint kube-system)" = no ] && ok "kube-system: no" || bad "rule still effective in kube-system"
+  [ "$(can_mint trellis vault-auth)" = yes ] && ok "trellis/vault-auth: yes (the namespaced Role)" || bad "trellis/vault-auth lost"
+  [ "$(can_mint trellis default)" = no ] && ok "trellis/default: no (resourceNames holds)" || bad "trellis/default still mintable"
+  echo "-- R2 the reference store still works on the namespaced Role alone"
+  # Already green before the sync, so the reason alone proves nothing: wait for a newer refresh.
+  local before; before=$(refreshed trellis trellis-secrets)
+  sync trellis trellis-secrets; began=$(el)
+  r=$(waitfor 60 "[ \"\$(refreshed trellis trellis-secrets)\" != '${before}' ] && esr trellis trellis-secrets" SecretSynced) \
+    && ok "trellis-secrets re-synced ${r} [sync ${began}]" || bad "trellis-secrets did not re-sync: ${r}"
+  echo "-- R3 remove the namespaced Role: the store must now fail, proving the Role is load-bearing"
+  kp -n trellis delete role eso-vault-token >/dev/null
+  sync trellis trellis-secrets; began=$(el)
+  r=$(waitfor 90 'esr trellis trellis-secrets' SecretSyncedError) && ok "trellis-secrets ${r} [sync ${began}]" || bad "trellis-secrets ${r}"
+  echo "   cause (latest warning event): $(kp -n trellis get events --field-selector involvedObject.name=trellis-secrets,type=Warning \
+    --sort-by=.lastTimestamp -o jsonpath='{.items[-1:].message}' 2>/dev/null | cut -c1-220)"
+  echo "   Secret kept under Retain: keys=$(keys trellis trellis-secrets)"
+  echo "-- R4 restore the Role: the store recovers"
+  kp apply -f "${REPO}/components/trellis-secrets/rbac.yaml" >/dev/null
+  sync trellis trellis-secrets; began=$(el)
+  r=$(waitfor 90 'esr trellis trellis-secrets' SecretSynced) && ok "trellis-secrets ${r} [sync ${began}]" || bad "trellis-secrets ${r}"
+  echo "=== remedy: ${fails} failure(s) ==="
+  return "$fails"
 }
 
 down() {
-  T0=$(date +%s)
-  echo "[$(el)] tearing down the parity cluster and everything it added"
-  kind delete cluster --name "$CLUSTER" --kubeconfig "$KCFG" 2>/dev/null || true
+  echo "[$(el)] removing what up created"
+  kind delete cluster --name "$CLUSTER" --kubeconfig "$KCFG" >/dev/null 2>&1 || true
   kl -n vault delete svc vault-nodeport --ignore-not-found >/dev/null || true
-  # Order matters: disabling the mount would take the role with it and leave the policy behind.
-  "${REPO}/scripts/secrets/vault.sh" parity disable || true
-  "${REPO}/scripts/secrets/vault.sh" tenant-auth disable || true
-  vault_cli kv metadata delete secret-lab/parity/kek >/dev/null 2>&1 || true
-  vault_cli kv metadata delete secret-lab/parity/service-token >/dev/null 2>&1 || true
-  vault_cli kv metadata delete secret-lab/parity/llm >/dev/null 2>&1 || true
-  vault_cli kv metadata delete secret-lab/parity/embedding >/dev/null 2>&1 || true
-  vault_cli kv metadata delete secret-lab/parity/tls >/dev/null 2>&1 || true
-  vault_cli kv metadata delete secret-lab/parity/composed >/dev/null 2>&1 || true
-  rm -f "$KCFG"
-  echo "[$(el)] done"
+  # Order matters: disabling the mount first would take the roles with it and hide a failed delete.
+  vsh parity disable || true
+  if [ -e "${STATE}/created-tenant-auth" ]; then vsh tenant-auth disable || true; fi
+  rm -rf "$STATE"
+  echo "[$(el)] down complete"
 }
 
 case "${1:-}" in
   up) up ;;
+  remedy) remedy ;;
   down) down ;;
-  *) echo "Usage: parity-gate.sh up|down (checks live in parity-checks.sh)" >&2; exit 2 ;;
+  *) echo "Usage: parity-gate.sh up|remedy|down" >&2; exit 2 ;;
 esac

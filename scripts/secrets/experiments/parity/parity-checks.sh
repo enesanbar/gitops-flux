@@ -1,88 +1,134 @@
 #!/usr/bin/env bash
-# The behavioural half of the parity gate. "kubectl apply succeeded" is not parity: a field the
-# 0.20.3 CRD accepts but the controller reads differently passes apply and fails silently, so every
-# feature the conventions standardize or refuse gets one observable here.
-# Reads the reference set (never writes to it) and mutates only secret-lab/parity/*.
+# The behavioural half of the parity gate, run once against each operator under test:
+#   parity-checks.sh <label> --context kind-local-dind-cluster        # the lab, ESO 2.11.0
+#   parity-checks.sh <label> --kubeconfig "${TMPDIR:-/tmp}/eso-parity/kubeconfig"   # the throwaway
+# "kubectl apply succeeded" is not parity: a field the CRD accepts but the controller reads
+# differently passes apply and fails silently, so each feature gets one observable, and every
+# observable reads "ERR" rather than a plausible value when the lookup itself fails, so a broken
+# kubectl call can never pass a check. Exit status is the number of failed checks.
+# Mutates only secret-lab/eso/parity-<label>/*, seeded and destroyed by this run; values travel on
+# stdin, never in argv. Prints names, lengths, digests and statuses, never a value.
 set -uo pipefail
 
+LABEL="${1:?label}"; shift; TARGET=("$@"); [ ${#TARGET[@]} -gt 0 ] || { echo "kubectl target args required" >&2; exit 2; }
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "${HERE}/../../../.." && pwd)"
-STATE="${PARITY_STATE:-${TMPDIR:-/tmp}/eso-parity}"
-KCFG="${STATE}/kubeconfig"
-kp() { kubectl --kubeconfig "$KCFG" "$@"; }
+NS=secret-lab-eso
+PREFIX="eso/parity-${LABEL}"
+LAB_CONTEXT=kind-local-dind-cluster
+kx() { kubectl "${TARGET[@]}" "$@"; }
 vc() { "${REPO}/scripts/secrets/vault.sh" cli "$@"; }
 T0=$(date -u +%s); el() { echo "+$(( $(date -u +%s)-T0 ))s"; }
 
-# Digest, never the value: enough to see a change, useless to anyone reading the log.
-digest() { kp -n trellis get secret "$1" -o go-template="{{with index .data \"$2\"}}{{.}}{{else}}absent{{end}}" 2>/dev/null | shasum | cut -c1-12; }
-# Answers "no-secret" once the Secret is gone - that string, not "", is what a wait matches on.
-keys()   { kp -n trellis get secret "$1" -o go-template='{{range $k,$v := .data}}{{$k}}({{len $v}}) {{end}}' 2>/dev/null || echo "no-secret"; }
-stype()  { kp -n trellis get secret "$1" -o jsonpath='{.type}' 2>/dev/null || echo "no-secret"; }
-owner()  { kp -n trellis get secret "$1" -o jsonpath='{.metadata.ownerReferences[0].kind}/{.metadata.ownerReferences[0].name}' 2>/dev/null; }
-esr()    { kp -n trellis get externalsecret "$1" -o jsonpath='{.status.conditions[0].reason}' 2>/dev/null; }
-esmsg()  { kp -n trellis get externalsecret "$1" -o jsonpath='{.status.conditions[0].message}' 2>/dev/null | cut -c1-120; }
-# waitfor <max-seconds> <cmd producing a value> <expected>  -- the trailing stamp is when the event
-# happened; a bare $(el) on the caller's echo line would be expanded before the wait even starts.
-waitfor() { local max=$1 exp=$3 i v; for i in $(seq 1 $((max/5))); do v=$(eval "$2"); [ "$v" = "$exp" ] && { echo "$v @$(el)"; return 0; }; sleep 5; done; echo "$v(timeout) @$(el)"; return 1; }
-waituntil_changes() { local max=$1 cmd=$2 from=$3 i v; for i in $(seq 1 $((max/5))); do v=$(eval "$cmd"); [ "$v" != "$from" ] && { echo "changed @$(el)"; return 0; }; sleep 5; done; echo "unchanged(timeout) @$(el)"; return 1; }
+# <name> <go-template>: the value, "absent" when the Secret does not exist, "ERR" on any other failure.
+sfield() { local out rc err; err=$(mktemp); out=$(kx -n "$NS" get secret "$1" -o go-template="$2" 2>"$err"); rc=$?
+  if [ $rc -eq 0 ]; then printf '%s' "$out"; elif grep -q NotFound "$err"; then printf absent; else printf ERR; fi; rm -f "$err"; }
+# A digest, never the value: enough to see a change, useless to anyone reading the transcript.
+digest() { local v; v=$(sfield "$1" "{{with index .data \"$2\"}}{{.}}{{else}}nokey{{end}}")
+  case "$v" in absent|ERR|nokey) echo "$v" ;; *) printf '%s' "$v" | shasum | cut -c1-12 ;; esac; }
+keys()     { sfield "$1" '{{range $k,$v := .data}}{{$k}}({{len $v}}) {{end}}'; }
+keynames() { sfield "$1" '{{range $k,$v := .data}}{{$k}} {{end}}' | sed 's/ $//'; }
+keycount() { local v; v=$(keynames "$1"); case "$v" in absent|ERR) echo "$v" ;; "") echo 0 ;; *) wc -w <<<"$v" | tr -d ' ' ;; esac; }
+stype()    { sfield "$1" '{{.type}}'; }
+owner()    { sfield "$1" '{{with .metadata.ownerReferences}}{{(index . 0).kind}}/{{(index . 0).name}}{{end}}'; }
+esget() { local out; out=$(kx -n "$NS" get externalsecret "$1" -o jsonpath="$2" 2>/dev/null) && printf '%s' "$out" || printf ERR; }
+esr()   { esget "$1" '{.status.conditions[0].reason}'; }
+esmsg() { esget "$1" '{.status.conditions[0].message}' | cut -c1-140; }
+cause() { kx -n "$NS" get events --field-selector "involvedObject.name=$1,type=Warning" --sort-by=.lastTimestamp \
+  -o jsonpath='{.items[-1:].message}' 2>/dev/null | cut -c1-200; }
+# waitfor <max-s> <cmd> <expected>: the trailing stamp is when the value arrived.
+waitfor() { local max=$1 exp=$3 i v; for i in $(seq 1 $((max/5))); do v=$(eval "$2"); [ "$v" = "$exp" ] && { echo "$v @$(el)"; return 0; }; sleep 5; done; echo "${v:-empty}(timeout) @$(el)"; return 1; }
+# waitchange <max-s> <cmd> <from>: a lookup failure is not a change.
+waitchange() { local max=$1 from=$3 i v; for i in $(seq 1 $((max/5))); do v=$(eval "$2")
+  case "$v" in ERR|absent|nokey|"") ;; *) [ "$v" != "$from" ] && { echo "changed @$(el)"; return 0; } ;; esac; sleep 5; done; echo "unchanged(${v}) @$(el)"; return 1; }
+can_mint() { kx auth can-i create "serviceaccounts${2:+/$2}" --subresource=token -n "$1" \
+  --as=system:serviceaccount:external-secrets:external-secrets 2>/dev/null || echo ERR; }
 
-echo "=== ESO 0.20.3 parity gate, $(date -u +%FT%TZ) ==="
-echo "-- versions"
-kp -n external-secrets get deploy external-secrets -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
-kp api-resources --api-group=external-secrets.io 2>/dev/null | sed 's/^/   /'
-echo "-- served CRD versions for externalsecrets"
-kp get crd externalsecrets.external-secrets.io -o jsonpath='{range .spec.versions[*]}{.name}(served={.served},storage={.storage}) {end}'; echo
+PASSES=0; FAILS=0
+pass() { echo "   PASS  $*"; PASSES=$((PASSES+1)); }
+fail() { echo "   FAIL  $*"; FAILS=$((FAILS+1)); }
+expect() { [ "$2" = "$3" ] && pass "$1: $2" || fail "$1: got '$2', expected '$3'"; }
 
-echo
-echo "-- P1 reference set, applied byte-for-byte from components/trellis-secrets/"
-echo "   trellis-secrets      status=$(waitfor 180 'esr trellis-secrets' SecretSynced)"
-echo "   trellis-secrets      keys=$(keys trellis-secrets)"
-echo "   trellis-secrets      type=$(stype trellis-secrets) owner=$(owner trellis-secrets)"
-echo "   trellis-tls-eso      status=$(waitfor 180 'esr trellis-tls-eso' SecretSynced)"
-echo "   trellis-tls-eso      keys=$(keys trellis-tls-eso) type=$(stype trellis-tls-eso)"
+put1()    { vc kv put -mount=secret-lab "${PREFIX}/$1" "$2=-" >/dev/null; }   # the value on stdin
+putjson() { vc kv put -mount=secret-lab "${PREFIX}/$1" - >/dev/null; }        # a JSON object on stdin
+rnd()     { openssl rand -base64 "${1:-24}" | tr -d '\n'; }
+ENTRIES="kek service-token composed tls doomed found/a found/b found/c"
+cleanup() {
+  sed -e "s/__NS__/${NS}/g" -e "s|__PREFIX__|${PREFIX}|g" "${HERE}/parity-behaviour.yaml" | kx delete --ignore-not-found -f - >/dev/null 2>&1
+  local e; for e in $ENTRIES; do vc kv metadata delete -mount=secret-lab "${PREFIX}/${e}" >/dev/null 2>&1; done
+  rm -f "${CA_TMP:-}"
+}
+trap cleanup EXIT
 
-echo
-echo "-- P2 standardized features on the mutable subtree"
-for n in p-explicit p-extract p-typed-tls p-createdonce p-delete-policy p-find; do
-  echo "   ${n} status=$(waitfor 180 "esr ${n}" SecretSynced) keys=$(keys "$n")"
+echo "=== ESO parity checks: ${LABEL}, $(date -u +%FT%TZ) ==="
+echo "   target: ${TARGET[*]}   namespace: ${NS}   backend subtree: secret-lab/${PREFIX}"
+echo "   operator: $(kx -n external-secrets get deploy external-secrets -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo ERR)"
+echo "   ExternalSecret CRD versions: $(kx get crd externalsecrets.external-secrets.io -o jsonpath='{range .spec.versions[*]}{.name}(served={.served}) {end}' 2>/dev/null || echo ERR)"
+
+echo "-- OBSERVED, not pass/fail: how far the operator's token-minting reaches"
+echo "   any ServiceAccount in kube-system:  $(can_mint kube-system)"
+echo "   ${NS}/vault-auth (the store's own): $(can_mint "$NS" vault-auth)"
+echo "   ${NS}/default (not granted by the Role): $(can_mint "$NS" default)"
+
+echo "-- seeding secret-lab/${PREFIX}/* and applying the behaviour set with strict validation"
+CA_TMP=$(mktemp); kubectl --context "$LAB_CONTEXT" -n "$NS" get cm vault-ca -o jsonpath='{.data.ca\.crt}' > "$CA_TMP"
+rnd 32 | put1 kek KEK
+rnd 24 | put1 service-token SERVICE_TOKEN
+jq -n '{A: "alpha", B: "bravo", C: "charlie"}' | putjson composed
+jq -n --rawfile crt "$CA_TMP" --rawfile key <(openssl genrsa 2048 2>/dev/null) '{"tls.crt": $crt, "tls.key": $key}' | putjson tls
+rnd 16 | put1 doomed VALUE
+for f in a b c; do rnd 12 | put1 "found/${f}" V; done
+if sed -e "s/__NS__/${NS}/g" -e "s|__PREFIX__|${PREFIX}|g" "${HERE}/parity-behaviour.yaml" | kx apply --validate=strict -f - >/dev/null; then
+  pass "all seven ExternalSecrets accepted under --validate=strict (remoteRef.version included)"
+else fail "strict apply rejected the behaviour set"; fi
+
+echo "-- P0 every object syncs"
+for n in p-explicit p-pinned p-extract p-typed-tls p-createdonce p-delete-policy p-find; do
+  r=$(waitfor 180 "esr ${n}" SecretSynced) && pass "${n} ${r}" || fail "${n} ${r} msg=$(esmsg "$n")"
 done
-echo "   p-typed-tls          type=$(stype p-typed-tls)  (expected kubernetes.io/tls)"
-echo "   p-explicit           owner=$(owner p-explicit)  (expected ExternalSecret/p-explicit)"
 
-echo
-echo "-- P3 Periodic refresh follows a backend rotation; CreatedOnce does not"
-before_explicit="$(digest p-explicit TRELLIS_KEK)"; before_once="$(digest p-createdonce TRELLIS_KEK)"
-echo "   digests before        p-explicit=${before_explicit} p-createdonce=${before_once}"
-vc kv put secret-lab/parity/kek TRELLIS_KEK="$(openssl rand -base64 32 | tr -d '\n')" >/dev/null
-echo "   rotated parity/kek at $(el)"
-began=$(el); echo "   p-explicit           $(waituntil_changes 180 'digest p-explicit TRELLIS_KEK' "$before_explicit")  [wait began ${began}]"
-sleep 90
-echo "   p-createdonce        after 90s further: $([ "$(digest p-createdonce TRELLIS_KEK)" = "$before_once" ] && echo 'unchanged (CreatedOnce held)' || echo 'CHANGED - CreatedOnce did not hold') @$(el)"
+echo "-- P1 shapes"
+expect "p-explicit keys" "$(keynames p-explicit)" "KEK"
+expect "p-pinned keys" "$(keynames p-pinned)" "KEK SERVICE_TOKEN"
+expect "p-extract keys (dataFrom.extract, one entry)" "$(keynames p-extract)" "A B C"
+expect "p-typed-tls type" "$(stype p-typed-tls)" "kubernetes.io/tls"
+expect "p-explicit owner (creationPolicy Owner)" "$(owner p-explicit)" "ExternalSecret/p-explicit"
 
-echo
-echo "-- P4 deletionPolicy Delete removes the consumer's Secret when the backend entry goes"
-echo "   p-delete-policy      before: keys=$(keys p-delete-policy)"
-vc kv metadata delete secret-lab/parity/service-token >/dev/null
-echo "   deleted parity/service-token at $(el)"
-began=$(el); echo "   p-delete-policy      $(waitfor 240 'keys p-delete-policy' 'no-secret')  [wait began ${began}]"
-echo "   p-delete-policy      secret now: $(kp -n trellis get secret p-delete-policy -o name 2>&1 | tail -1)"
-echo "   p-delete-policy      es reason=$(esr p-delete-policy) msg=$(esmsg p-delete-policy)"
+echo "-- P2 a new version of the key: Periodic follows; a pinned version and CreatedOnce do not"
+b_explicit=$(digest p-explicit KEK); b_pinned=$(digest p-pinned KEK); b_once=$(digest p-createdonce KEK)
+echo "   digests before: explicit=${b_explicit} pinned=${b_pinned} createdonce=${b_once}"
+rnd 32 | put1 kek KEK; began=$(el); echo "   wrote kek v2 at ${began}"
+r=$(waitchange 120 'digest p-explicit KEK' "$b_explicit") && pass "p-explicit followed: ${r} [write ${began}]" || fail "p-explicit did not follow: ${r}"
+sleep 45   # at least one more 30s refresh for everything else
+expect "p-pinned KEK after two refreshes (version pinned to 1)" "$(digest p-pinned KEK)" "$b_pinned"
+expect "p-pinned still healthy" "$(esr p-pinned)" "SecretSynced"
+expect "p-createdonce KEK after two refreshes" "$(digest p-createdonce KEK)" "$b_once"
 
-echo
-echo "-- P5 deletionPolicy Retain keeps it, and the ExternalSecret is the signal that says so"
-vc kv metadata delete secret-lab/parity/kek >/dev/null
-echo "   deleted parity/kek at $(el)"
-began=$(el); echo "   p-explicit           es reason=$(waitfor 180 'esr p-explicit' SecretSyncedError)  [wait began ${began}]"
-echo "   p-explicit           msg=$(esmsg p-explicit)"
-echo "   p-explicit           keys still=$(keys p-explicit)  (Retain: the consumer keeps mounting)"
+echo "-- P3 the pin is per key: the same Secret's other key still refreshes"
+b_token=$(digest p-pinned SERVICE_TOKEN)
+rnd 24 | put1 service-token SERVICE_TOKEN; began=$(el)
+r=$(waitchange 120 'digest p-pinned SERVICE_TOKEN' "$b_token") && pass "p-pinned SERVICE_TOKEN followed: ${r} [write ${began}]" || fail "p-pinned SERVICE_TOKEN did not follow: ${r}"
+expect "p-pinned KEK still pinned" "$(digest p-pinned KEK)" "$b_pinned"
 
-echo
-echo "-- P6 dataFrom.find: a key removed from the matched set disappears while the status stays green"
-echo "   p-find               before: keys=$(keys p-find) reason=$(esr p-find)"
-vc kv metadata delete secret-lab/parity/llm >/dev/null
-echo "   deleted parity/llm at $(el)"
-sleep 90
-echo "   p-find               after 90s: keys=$(keys p-find) reason=$(esr p-find) @$(el)"
+echo "-- P4 deletionPolicy Delete removes the Secret when its entry goes (the refused behaviour)"
+vc kv metadata delete -mount=secret-lab "${PREFIX}/doomed" >/dev/null; began=$(el)
+r=$(waitfor 180 'keys p-delete-policy' absent) && pass "p-delete-policy Secret gone: ${r} [delete ${began}]" || fail "p-delete-policy Secret still there: ${r}"
+echo "   reason=$(esr p-delete-policy) message=$(esmsg p-delete-policy)"
 
-echo
-echo "=== end, $(el) ==="
+echo "-- P5 deletionPolicy Retain keeps the Secret, and the ExternalSecret carries the failure"
+vc kv metadata delete -mount=secret-lab "${PREFIX}/kek" >/dev/null; began=$(el)
+r=$(waitfor 120 'esr p-explicit' SecretSyncedError) && pass "p-explicit ${r} [delete ${began}]" || fail "p-explicit ${r}"
+expect "p-explicit Secret kept" "$(keynames p-explicit)" "KEK"
+echo "   condition message: $(esmsg p-explicit)"
+echo "   cause, from the latest warning event: $(cause p-explicit)"
+
+echo "-- P6 dataFrom.find drops a removed key while reporting success (the refused behaviour)"
+b_count=$(keycount p-find); echo "   before: ${b_count} keys ($(keynames p-find)) reason=$(esr p-find)"
+vc kv metadata delete -mount=secret-lab "${PREFIX}/found/b" >/dev/null; began=$(el)
+r=$(waitfor 120 'keycount p-find' 2); echo "   after: $(keynames p-find) reason=$(esr p-find) [delete ${began}, ${r}]"
+if [ "$b_count" = 3 ] && [ "$(keycount p-find)" = 2 ] && [ "$(esr p-find)" = SecretSynced ]; then
+  pass "hazard reproduced: a key vanished and the status stayed SecretSynced"
+else fail "find did not behave as recorded (before=${b_count}, after=$(keycount p-find), reason=$(esr p-find))"; fi
+
+echo "=== ${LABEL}: ${PASSES} passed, ${FAILS} failed, $(el) ==="
+exit "$FAILS"
