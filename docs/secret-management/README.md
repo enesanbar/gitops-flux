@@ -212,6 +212,139 @@ Removing an ExternalSecret garbage-collects its owned Secret; removing a provide
 value retains the last Kubernetes value and reports an error (`deletionPolicy:
 Retain`). Read that status rather than treating an old value as proof of sync.
 
+## ESO: onboarding an application, rotating, and reading the failure
+
+The conventions behind this section — path layouts, store scoping, ownership, and which features to
+standardize — are in [CONVENTIONS.md](CONVENTIONS.md). `components/trellis-secrets/` is the worked
+example; everything below is what you actually type.
+
+### Onboarding an application
+
+Four objects, in this order. `<app>` is both the namespace and the path segment.
+
+1. **A Vault policy and role for the application.** The policy reads one subtree and nothing else;
+   the role binds it to one ServiceAccount in one namespace, with an audience.
+
+   ```bash
+   # policy: read-only on the application's own subtree
+   ./scripts/secrets/vault.sh cli policy write secret-lab-<app> - <<'HCL'
+   path "secret-lab/data/<app>/*"     { capabilities = ["read"] }
+   path "secret-lab/metadata/<app>/*" { capabilities = ["read", "list"] }
+   HCL
+   ```
+
+   The role itself needs mount administration, so it is written by `vault.sh bootstrap` alongside
+   the others rather than by hand — add the application to the loop there.
+
+2. **The identity, in the application's namespace.** A ServiceAccount that no pod mounts, plus the
+   narrowest RBAC that lets the operator mint a token for it:
+
+   ```bash
+   sed 's/trellis/<app>/g' components/trellis-secrets/rbac.yaml | \
+     kubectl --context kind-local-dind-cluster apply -f -
+   ```
+
+   `resourceNames: [vault-auth]` on the Role is the part that matters: without it the operator may
+   mint a token for *any* ServiceAccount in that namespace.
+
+3. **The CA the store trusts**, as a ConfigMap — a public certificate, not a secret:
+
+   ```bash
+   ./scripts/secrets/prepare-local.sh        # restores vault-ca into each configured namespace
+   ```
+
+4. **The store and the ExternalSecret**, copied from `components/trellis-secrets/` with the
+   namespace, role and paths changed. Then check it landed:
+
+   ```bash
+   kubectl --context kind-local-dind-cluster -n <app> get secretstore,externalsecret
+   kubectl --context kind-local-dind-cluster -n <app> get externalsecret <name> \
+     -o jsonpath='{.status.conditions[0].reason}{"  "}{.status.conditions[0].message}{"\n"}'
+   ```
+
+   Read key **names and lengths** when you verify, never values:
+
+   ```bash
+   kubectl --context kind-local-dind-cluster -n <app> get secret <name> \
+     -o go-template='{{range $k,$v := .data}}{{$k}} ({{len $v}}){{"\n"}}{{end}}'
+   ```
+
+   Printing a Secret's `metadata.annotations` is as bad as printing its `data`: a Secret that was
+   ever applied with `kubectl apply` carries the whole object, values included, in
+   `last-applied-configuration`.
+
+### Rotating a value
+
+Write the new version in the backend; nothing in the cluster needs touching.
+
+```bash
+./scripts/secrets/vault.sh cli kv put secret-lab/<app>/<entry> KEY="$(openssl rand -base64 32 | tr -d '\n')"
+```
+
+`tr -d '\n'` is not decoration: `openssl` and `jq -r` both append a newline, and that newline is
+delivered into the Secret and into whatever reads it.
+
+The Secret follows within the refresh interval. To stop waiting:
+
+```bash
+kubectl --context kind-local-dind-cluster -n <app> annotate externalsecret <name> \
+  force-sync="$(date +%s%N)" --overwrite
+```
+
+**The process does not follow.** An environment variable is fixed at container start, and a file
+mounted with `subPath` is never updated in place — only a whole-volume mount is refreshed, and even
+then the process must re-read the file. Plan the rollout:
+
+```bash
+kubectl --context kind-local-dind-cluster -n <app> rollout restart deployment/<name>
+```
+
+or adopt the reloader below and accept what it costs.
+
+### The key class
+
+An encryption or signing key is not a credential: losing it loses data. Deliver it with its own
+`ExternalSecret`, its own Secret, `refreshPolicy: CreatedOnce` and `deletionPolicy: Retain`, and
+never behind anything that can generate a value. Rotation is a re-encryption with both keys
+present, never a value swap. CONVENTIONS.md §4 has the full rule.
+
+### Reading the failure
+
+The `ExternalSecret`'s condition is the signal. The `SecretStore`'s is not: it reflects the last
+validation, and it stays `Valid` through a backend outage.
+
+```bash
+kubectl --context kind-local-dind-cluster -n <app> get externalsecret -o custom-columns=\
+'NAME:.metadata.name,REASON:.status.conditions[0].reason,MESSAGE:.status.conditions[0].message'
+kubectl --context kind-local-dind-cluster -n external-secrets logs deployment/external-secrets --tail=50
+```
+
+| What you see | What it means | What to do |
+| --- | --- | --- |
+| `SecretSynced` | The last sync succeeded. It does **not** mean the value is current — a Secret delivered under `deletionPolicy: Retain` keeps serving the last good value while the backend is failing. Read the timestamp too. | Nothing. |
+| `SecretSyncedError` + `permission denied` | The Vault role or policy does not cover the path, or the role's binding does not match this namespace and ServiceAccount. | Check the policy path and the role's `bound_service_account_namespaces`. |
+| `SecretSyncedError` + `Secret does not exist` | The path is wrong, or the entry was deleted. Note the wording: a missing entry reads the same as a typo. | Compare the `remoteRef.key` against a `kv list` of the parent path. |
+| `SecretSyncedError` + a DNS or connection error | The backend is unreachable. Under `Retain` the Secret stays; under `Delete` it will be removed. | Fix the reach; do not "fix" it by deleting the ExternalSecret, which garbage-collects the Secret. |
+| `InvalidProviderConfig` on the store | The store's CA, server URL or auth block is wrong. | The store, not the ExternalSecret. |
+| A Secret that vanished | `deletionPolicy: Delete` met a backend that answered "not found". | Restore the backend entry; then change the policy to `Retain`. |
+
+### Restarting on change: what a reloader costs
+
+`components/reloader/` closes the gap between "the Secret changed" and "the process sees it": it
+watches Secrets and restarts the Deployments that consume them, about a minute after the change.
+Three things come with it, and they are the reason it is opt-in rather than default:
+
+- It needs **get/list/watch on Secrets cluster-wide**. That is a controller that can read every
+  Secret in the cluster, so it is a trust decision, not a convenience.
+- Every consumer of a changed Secret restarts. A Secret shared by several workloads becomes a
+  fan-out restart, which is exactly when you least want one.
+- It leaves a **content digest of the Secret readable on the Deployment**
+  (`reloader.stakater.com/last-reloaded-from`, a 40-character hash). Switching the reload strategy
+  moves that fingerprint; it cannot remove it, because detecting that content changed is the
+  mechanism. A workload whose key must not be fingerprinted at all cannot use a reloader.
+
+Scope it with `namespaceSelector` and decide per namespace.
+
 ## VSO
 
 `components/secret-stores/vso-vault.yaml` contains namespace-local `VaultConnection`
