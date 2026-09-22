@@ -1,6 +1,6 @@
-# Restart tooling under evaluation: restarts a Deployment when a Secret or ConfigMap it mounts or
-# references changes, so a rotated value reaches a process that only reads at start. Workloads opt in
-# with the reloader.stakater.com/auto annotation; nothing is restarted without it.
+# Optional restart tooling: restarts a Deployment when a Secret or ConfigMap it mounts or references
+# changes, so a rotated value reaches a process that only reads at start. Workloads opt in with the
+# reloader.stakater.com/auto annotation; nothing is restarted without it.
 #
 # TRUST BOUNDARY, measured 2026-09-22: this controller reads EVERY Secret in the cluster (its
 # ClusterRole holds secrets get/list/watch) and patches every Deployment, DaemonSet and StatefulSet.

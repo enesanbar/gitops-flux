@@ -225,12 +225,18 @@ Four objects, in this order. `<app>` is both the namespace and the path segment.
 1. **A Vault policy and role for the application**, committed rather than typed. The policy reads
    one subtree and nothing else; the role binds it to one ServiceAccount in one namespace, with an
    audience. The operator login cannot write either, so both go through `vault.sh bootstrap`, which
-   applies what the repository holds and is safe to re-run:
+   applies what the repository holds and is safe to re-run. The three `auth/token` lines match every
+   store policy already in `scripts/secrets/vault/policies/`: the roles there are created without
+   Vault's default policy, so a store's token can only look itself up, renew and revoke if the
+   policy says so.
 
    ```bash
    cat > scripts/secrets/vault/policies/<app>.hcl <<'HCL'
    path "secret-lab/data/<app>/*"     { capabilities = ["read"] }
    path "secret-lab/metadata/<app>/*" { capabilities = ["read", "list"] }
+   path "auth/token/lookup-self" { capabilities = ["read"] }
+   path "auth/token/renew-self"  { capabilities = ["update"] }
+   path "auth/token/revoke-self" { capabilities = ["update"] }
    HCL
    # In vault.sh bootstrap, add <app> to the policy loop, and <app>:<app>:vault-auth:secret-lab-<app>
    # to the application-role loop (<role>:<namespace>:<service account>:<policy>). Then:
@@ -250,11 +256,13 @@ Four objects, in this order. `<app>` is both the namespace and the path segment.
      -n kube-system --as=system:serviceaccount:external-secrets:external-secrets
    ```
 
-   `no` means the Role is the whole grant. `yes` means the chart gave the operator token creation in
-   every namespace and the Role adds nothing: charts before 2.5.0 grant it unconditionally, and from
-   2.5.0 `rbac.serviceAccountTokenCreate` controls it and defaults to `true`. CONVENTIONS.md §2 has
-   the fix for both. (`kubectl auth can-i` exits non-zero when the answer is `no`; read the answer,
-   not the exit status.)
+   `no` means token *requests* are limited to the ServiceAccounts the Roles name. `yes` means the
+   chart grants them everywhere and the Role adds nothing: charts before 2.5.0 do so unconditionally,
+   and from 2.5.0 `rbac.serviceAccountTokenCreate` controls it and defaults to `true`. Either way the
+   operator stays one of the most privileged identities on the cluster — it creates and reads Secrets
+   wherever it delivers — and CONVENTIONS.md §2 says what that means and what to do about it.
+   (`kubectl auth can-i` exits non-zero when the answer is `no`; read the answer, not the exit
+   status.)
 
 3. **The CA the store trusts**, as a ConfigMap: a public certificate, not a secret, but specific
    to this machine, so `scripts/secrets/prepare-local.sh` creates it rather than Git. That script only
@@ -319,15 +327,18 @@ or adopt the reloader below and accept what it costs.
 ### The key class
 
 An encryption or signing key is not a credential: losing it loses data. Deliver it with its own
-`ExternalSecret`, its own Secret, `refreshPolicy: CreatedOnce` and `deletionPolicy: Retain`, and
-never behind anything that can generate a value. Rotation is a re-encryption with both keys
-present, never a value swap. CONVENTIONS.md §4 has the full rule.
+`ExternalSecret`, its own Secret, `refreshPolicy: CreatedOnce` and `deletionPolicy: Retain` — or,
+when the chart takes it in one Secret with the credentials, as `components/trellis-secrets/` does,
+pin its backend version with `remoteRef.version` so only a reviewed commit can move it. Never behind
+anything that can generate a value. Rotation is a re-encryption with both keys present, never a
+value swap. CONVENTIONS.md §4 has the full rule and the pin's own hazards.
 
 ### Reading the failure
 
-Read the `ExternalSecret`, then its events. Its condition says **whether** the last sync failed, not
-why: the message is the same `could not get secret data from provider` whatever the cause, and the
-cause is only in the events and the controller log.
+Read the `ExternalSecret`, then its events. Its condition says **whether** the last sync failed; the
+message only narrows it — any failure to read from the backend reads `could not get secret data from
+provider`, a failure to write the Secret (a bad template, for one) reads `could not update secret` —
+and the cause itself is in the events and the controller log.
 
 ```bash
 kubectl --context kind-local-dind-cluster -n <app> get externalsecret -o custom-columns=\
@@ -336,16 +347,19 @@ kubectl --context kind-local-dind-cluster -n <app> describe externalsecret <name
 kubectl --context kind-local-dind-cluster -n external-secrets logs deployment/external-secrets --tail=50
 ```
 
-The `SecretStore`'s condition tracks something narrower: whether the operator can **log in**. It
-turns `InvalidProviderConfig` when a login fails — a sealed Vault did it here as reliably as a wrong
-role would — and stays `Valid` through everything that goes wrong after login: a revoked policy, a
-deleted entry, credentials that expired downstream. A green store is not a working store.
+**Do not read the `SecretStore`'s condition as the backend's state.** It is the result of the store's
+own validation, which runs on its own schedule and checks only whether a login works. With Vault
+sealed, one run here caught it and turned the store `InvalidProviderConfig` within a second; another
+saw the store stay `Valid` for the whole outage. With the backend reachable but refusing — a revoked
+policy, a deleted entry, an unreachable Parameter Store endpoint, credentials that expired downstream
+— it stayed `Valid` every time. A `Valid` store proves nothing about the backend; an
+`InvalidProviderConfig` one is a real login failure.
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
 | `SecretSynced` | The last sync succeeded. It does **not** mean the value is current: under `deletionPolicy: Retain` a Secret keeps its last good value while syncs fail, so check `REFRESHED`. | Nothing. |
-| `SecretSyncedError`, store `Valid` | Login works and reading does not. The event says which: `Secret does not exist` for a missing entry or a mistyped path (the two read the same, for Vault and Parameter Store alike, and never as Parameter Store's own `ParameterNotFound`), `permission denied` when the policy does not cover the path, an access denial with a request id, an expired token. | Follow the event. For a path, compare `remoteRef.key` with a listing of its parent. |
-| `SecretSyncedError`, store `InvalidProviderConfig` | The operator cannot log in: the backend is sealed or unreachable, or the store's CA, server, auth mount or role is wrong. | The backend's health **first**, the store definition second. Never delete the ExternalSecret to "reset" it: that garbage-collects the Secret. |
+| `SecretSyncedError` (store `Valid` or not) | A sync failed. **This is the common shape of every outage**, because the store often has not noticed yet. The event says which: `Secret does not exist` for a missing entry or a mistyped path (the two read the same, for Vault and Parameter Store alike, and never as Parameter Store's own `ParameterNotFound`); `permission denied` when a Vault policy does not cover the path; an access denial with a request id; an expired token; a refused or timed-out connection when the backend is down; a sealed-Vault error from the login. | Follow the event. For a backend error, check the backend's health before anything in the cluster. For a path, compare `remoteRef.key` with a listing of its parent. Never delete the ExternalSecret to "reset" it: that garbage-collects the Secret. |
+| store `InvalidProviderConfig` | The store's last login failed: the backend is sealed or unreachable, or the store's CA, server, auth mount or role is wrong. | The backend's health **first**, the store definition second. |
 | `SecretDeleted`, and the Secret is gone | `deletionPolicy: Delete` met a backend that answered "not found". | Restore the entry, then change the policy to `Retain`. |
 
 ### Restarting on change: what a reloader costs

@@ -3,9 +3,9 @@
 What follows is what the experiments in this repository settled, stated as rules with the reason
 attached. Each rule says which kind it is: **Measured** names the script under
 `scripts/secrets/experiments/` that observed it, and **Judgement** marks a design call that no
-experiment can settle. The operator-version parity gate (`parity/`) ran every measured feature on
-ESO 2.11.0 and 0.20.3 with the same checks; a difference between the two is called out where it
-exists.
+experiment can settle. Which operator version a measurement covers follows from the script: the
+parity checks (`parity/parity-checks.sh`, check ids P0–P6 and the token-minting check) ran with the
+same script against ESO 2.11.0 and 0.20.3; the rows under `matrix/` ran on the lab's 2.11.0 only.
 
 The scope is **delivery**: getting a value that lives in an external store into a Kubernetes Secret,
 and from there into a process. Issuance (minting a certificate, creating a database user) is a
@@ -96,31 +96,62 @@ ServiceAccount token Secret mounted into a pod. Grant the operator `create` on
 `serviceaccounts/token` for **that one ServiceAccount by name** (`resourceNames`), which is what
 `components/trellis-secrets/rbac.yaml` does.
 
-### That grant is only real if the operator has no wider one
+### What the operator can do, whatever its Roles say
 
-**Measured** (`parity/parity-checks.sh`, the token-minting observation; `parity/parity-gate.sh remedy`).
-The chart may already have given the operator token creation in every namespace, and then the
-per-namespace Role adds nothing: a compromised or misconfigured operator can mint an API token for
-any ServiceAccount in the cluster, including privileged ones.
+**Measured** (`parity/parity-checks.sh`, the token-minting check; `parity/parity-gate.sh remedy`;
+`matrix/r17-operator-token-secret.sh`).
 
-| Chart | Cluster-wide token creation | Asked of the operator's identity |
+The operator writes Secrets in every namespace it delivers to, so its chart gives it `secrets`
+create, read, update and delete **cluster-wide**, on 0.20.3 and on 2.11.0 alike — that is the job,
+not a mistake. The consequence is easy to miss: a `kubernetes.io/service-account-token` Secret the
+operator creates for *any* ServiceAccount is filled in by the cluster's token controller, and the
+operator can read it back. Measured on the lab with the TokenRequest grant already removed: it
+obtained a long-lived token for a ServiceAccount no Role names. **A compromised or misconfigured
+operator can act as any ServiceAccount on the cluster.** Treat its identity as one of the most
+privileged there is — who can change its image, its Deployment or its namespace is a question with
+the same weight as who holds cluster-admin. This is the same class of reach as anything else that
+writes Secrets cluster-wide, and not specific to this operator.
+
+What the pieces of the setup above do and do not change:
+
+| Control | What it closes | Measured |
 | --- | --- | --- |
-| before 2.5.0 (0.20.3 measured) | **granted unconditionally**; no value turns it off | any ServiceAccount in `kube-system`: **yes**; a ServiceAccount the Role does not name: **yes** |
+| A per-namespace Role granting token requests for one named ServiceAccount | Nothing on its own; it is what the store needs once the chart's wider grant is gone | the store depends on it once the wider grant is removed |
+| No cluster-wide token-request grant (chart ≥ 2.5.0 with `rbac.serviceAccountTokenCreate: false`, or the patch below on older charts) | The TokenRequest door: short-lived tokens for arbitrary ServiceAccounts | yes, both ways |
+| Neither | The Secret door above stays open | yes |
+
+So removing the cluster-wide token grant is **hygiene worth the one line it costs**, not a bound on
+the operator. What actually bounds it:
+
+- **Scope it.** With `scopedNamespace` and `scopedRBAC`, the chart renders the controller's rules as a
+  Role in that one namespace instead of a ClusterRole (checked by rendering 0.20.3). That fits an
+  operator serving one namespace, not a shared one. Its certificate controller keeps cluster-wide
+  read on Secrets either way.
+- **Refuse the Secret door at admission** (**judgement**, not exercised here): an admission policy
+  that denies the operator's ServiceAccount the creation of `kubernetes.io/service-account-token`
+  Secrets closes the escalation path while leaving delivery alone.
+
+The token-request grant, by chart version:
+
+| Chart | Cluster-wide token requests | Asked of the operator's identity |
+| --- | --- | --- |
+| before 2.5.0 (0.20.3 measured) | granted; no dedicated switch — only scoping the whole operator (`scopedNamespace` + `scopedRBAC`) or `rbac.create: false` removes it | any ServiceAccount in `kube-system`: **yes**; a ServiceAccount no Role names: **yes** |
 | 2.5.0 and later | `rbac.serviceAccountTokenCreate`, **default `true`** | as above until it is set to `false` |
 | 2.11.0 with `rbac.serviceAccountTokenCreate: false` (this repository) | removed | `kube-system`: **no**; the named ServiceAccount: **yes**; any other: **no** |
 
-Ask the question directly rather than reading chart versions:
+Ask the cluster rather than reading chart versions:
 
 ```bash
 kubectl auth can-i create serviceaccounts --subresource=token -n kube-system \
   --as=system:serviceaccount:external-secrets:external-secrets
 ```
 
-The fix, by chart version:
+Removing it, by chart version:
 
 - **2.5.0 and later**: set `rbac.serviceAccountTokenCreate: false` in the operator's values, as
-  `components/external-secrets/helm-release.yaml` does, and give every namespace that has a store its
-  own Role.
+  `components/external-secrets/helm-release.yaml` does, and give a Role to every namespace where the
+  operator must request a token — each namespace with a store, and each with a generator that names
+  a ServiceAccount.
 - **Before 2.5.0**: remove the rule after rendering. A Flux `HelmRelease` does it with a post-renderer
   carrying `scripts/secrets/experiments/parity/strip-token-rule.patch.yaml`:
 
@@ -138,15 +169,14 @@ The fix, by chart version:
               path: /rules/7
   ```
 
-  Index 7 is where the rule sits in a 0.20.3 render with this repository's values; other values
-  add or drop rules above it, so derive the index from your own render (`helm template` piped
-  through `yq`). The `test` operation is what makes a wrong index safe: the render stops instead of
-  removing a different rule, so a failed reconcile after a chart or values change means "re-derive
-  the index", not "the patch is broken". Measured on 0.20.3: with the rule removed, the
-  namespaced store keeps working on its Role alone, and removing that Role then breaks it — so the
-  Role is what the store depends on, which is the property the pattern exists to give. The patch
-  ops were applied to the live ClusterRole and to a chart render; the `HelmRelease` wrapper itself
-  was not run through Flux here.
+  The index is render-specific: the rule is at 7 in a 0.20.3 render with this repository's values
+  and at 8 with the chart's defaults, because `processClusterGenerator: false` drops a rule above
+  it. Derive it from your own render (`helm template` piped through `yq`). The `test` operation is
+  what makes a wrong index safe — the render stops instead of removing a different rule — so a failed
+  reconcile after a chart or values change means "re-derive the index", not "the patch is broken".
+  Measured on 0.20.3: with the rule removed, the namespaced store keeps working on its Role alone, and
+  removing that Role then breaks it. The patch operations were applied to the live ClusterRole and to
+  chart renders; the `HelmRelease` wrapper itself was not run through Flux here.
 
 Cluster-scoped is the right answer for exactly one shape: material the platform owns, that is byte
 -identical in every namespace, and whose reader identity genuinely is "the cluster" — a private
@@ -215,14 +245,20 @@ For that class:
   separate.
 - Use `refreshPolicy: CreatedOnce`. The value must not change underneath a running process, because
   a process that re-reads it will decrypt nothing. **Measured** on both operator versions
-  (`parity/parity-checks.sh` P2): a new backend version never reaches it.
+  (`parity/parity-checks.sh` P2): a new backend version did not reach it through a forced sync that a
+  Periodic object on the same interval followed.
 - **When the consumer takes one Secret** — a chart with a single `existingSecret` for the key and its
   credentials — the key cannot have a Secret of its own, and `CreatedOnce` would freeze the
   credentials with it. Pin the key's backend version instead (`remoteRef.version`). **Measured** on
   both operator versions against Vault KV v2 (`parity/parity-checks.sh` P2, P3): a new version of the
   key reaches nothing, the pinned `ExternalSecret` stays healthy, and the other keys in the same
   Secret keep refreshing. Rotating the key is then a reviewed commit that moves one number, made as
-  the last step of the re-encryption. `components/trellis-secrets/` is this case.
+  the last step of the re-encryption. `components/trellis-secrets/` is this case. Two hazards come
+  with the pin. If the pinned version is destroyed — or pruned, because KV v2 keeps ten versions by
+  default — the whole `ExternalSecret` fails, not just that key (one bad entry fails the whole object:
+  **measured**, `matrix/r3-r4-paths-and-deletion.sh`); `Retain` keeps the Secret, but every other key
+  in it stops refreshing. Raise the entry's `max_versions`, or re-pin, before that can happen. And the
+  pin binds this operator only: anything reading the entry directly still gets the latest version.
 - Use `deletionPolicy: Retain`, so a backend blip cannot remove the key from under a mounted volume.
 - Never put it behind a generator, a chart `randAlphaNum` default, or anything else that can produce
   a *new* value when the old one is missing. Silent regeneration of a key is indistinguishable from
@@ -230,7 +266,7 @@ For that class:
 - Never put an **unpinned** key in a Secret a reloader watches: the reloader turns a backend write
   into a restart within the refresh interval, and the process comes up under a key that opens none
   of the data sealed with the old one. A pinned or `CreatedOnce` key is safe beside a reloader:
-  **measured** (`matrix/r16-pinned-key-under-reloader.sh`), a new version of a pinned key refreshed
+  **measured** on 2.11.0 (`matrix/r16-pinned-key-under-reloader.sh`), a new version of a pinned key refreshed
   the Secret without changing its bytes and restarted nothing, while a new version of an unpinned key
   in the same Secret restarted the consumer.
 
@@ -238,8 +274,8 @@ For that class:
 
 ### Standardize
 
-Every **measured** row held on ESO 2.11.0 and 0.20.3 alike (`parity/parity-checks.sh`, which runs
-the same checks against both).
+Rows whose evidence is a P-numbered check held on ESO 2.11.0 and 0.20.3 alike; rows citing
+`matrix/` were measured on 2.11.0.
 
 | Feature | Why | Evidence |
 | --- | --- | --- |
@@ -297,13 +333,17 @@ Two properties that are easy to assume and are not true:
   new one, and a file mounted with `subPath` is not updated in place either — only a whole-volume
   mount is, and then only if the process re-reads it. Closing that gap needs a restart, which means
   either a deliberate rollout or a reloader (see `README.md` for the trade-off). **Measured** on this
-  lab's application, for environment and `subPath` delivery both.
-- **A green `SecretStore` is not a working store.** The store's condition tracks whether the operator
-  can *log in*: a sealed Vault turned it `InvalidProviderConfig` (`matrix/r1-backend-unavailable.sh`).
-  Everything that fails after login leaves it `Valid` — a revoked policy
-  (`matrix/r2-permission-revoked.sh`), a deleted entry, credentials that expired downstream. The
-  signal that matters is the `ExternalSecret`'s own condition, and the cause is in its events: the
-  condition message is the same generic text whatever went wrong. **Measured**.
+  lab's application for environment delivery (`matrix/r15-reloader.sh`) and `subPath` delivery
+  (`matrix/r11-subpath-under-reloader.sh`).
+- **A green `SecretStore` is not a working store.** Its condition is the result of its own
+  validation, which runs on its own schedule and tests only a login. With Vault sealed it went
+  `InvalidProviderConfig` in one run (`matrix/r1-backend-unavailable.sh`) and stayed `Valid` through
+  the whole outage in another (`matrix/r1b-file-delivery-outage.sh`); a revoked policy
+  (`matrix/r2-permission-revoked.sh`), an unreachable Parameter Store endpoint
+  (`matrix/r-aws-unreachable.sh`) and expired downstream credentials (`matrix/r-sts-expiry.sh`) left it
+  `Valid` every time. The signal is the `ExternalSecret`'s condition, and the cause is in its events:
+  its message says only which side failed — reading from the backend, or writing the Secret.
+  **Measured**.
 
 ## 8. Five shapes, end to end
 
