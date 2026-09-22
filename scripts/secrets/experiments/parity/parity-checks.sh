@@ -41,8 +41,10 @@ waitfor() { local max=$1 exp=$3 i v; for i in $(seq 1 $((max/5))); do v=$(eval "
 # waitchange <max-s> <cmd> <from>: a lookup failure is not a change.
 waitchange() { local max=$1 from=$3 i v; for i in $(seq 1 $((max/5))); do v=$(eval "$2")
   case "$v" in ERR|absent|nokey|"") ;; *) [ "$v" != "$from" ] && { echo "changed @$(el)"; return 0; } ;; esac; sleep 5; done; echo "unchanged(${v}) @$(el)"; return 1; }
-can_mint() { kx auth can-i create "serviceaccounts${2:+/$2}" --subresource=token -n "$1" \
-  --as=system:serviceaccount:external-secrets:external-secrets 2>/dev/null || echo ERR; }
+# can-i exits 1 when the answer is "no", so the answer is read from its output, never its status.
+can_mint() { local out; out=$(kx auth can-i create "serviceaccounts${2:+/$2}" --subresource=token -n "$1" \
+  --as=system:serviceaccount:external-secrets:external-secrets 2>/dev/null)
+  case "$out" in yes|no) echo "$out" ;; *) echo ERR ;; esac; }
 
 PASSES=0; FAILS=0
 pass() { echo "   PASS  $*"; PASSES=$((PASSES+1)); }
