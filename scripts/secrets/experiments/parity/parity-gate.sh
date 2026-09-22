@@ -105,7 +105,7 @@ ports: [{name: https, port: ${nodeport}, protocol: TCP}]
 endpoints: [{addresses: ["${lab_ip}"], conditions: {ready: true}}]
 YAML
 
-  echo "[$(el)] installing external-secrets ${ESO_VERSION} with the lab's values"
+  echo "[$(el)] installing external-secrets ${ESO_VERSION} with the lab's values (the token-request switch among them does not exist there)"
   # Repository config and cache live in the gate's own state: with --repo, helm still reads every
   # configured repository's cached index, so one stale entry on the host fails the install.
   helm --kubeconfig "$KCFG" --repository-config "${STATE}/helm-repositories.yaml" \

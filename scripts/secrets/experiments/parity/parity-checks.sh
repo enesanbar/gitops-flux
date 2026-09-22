@@ -112,6 +112,7 @@ expect "p-pinned KEK after two refreshes (version pinned to 1)" "$(digest p-pinn
 expect "p-pinned still healthy" "$(esr p-pinned)" "SecretSynced"
 # Force both a CreatedOnce object and its Periodic twin on the same effective interval: the twin
 # following is what shows the forced sync was real, so the CreatedOnce result means something.
+expect "control: p-periodic-slow has not refreshed on its own (1h interval)" "$(digest p-periodic-slow KEK)" "$b_slow"
 for n in p-createdonce p-periodic-slow; do kx -n "$NS" annotate externalsecret "$n" force-sync="$(date +%s)" --overwrite >/dev/null; done
 began=$(el)
 r=$(waitchange 60 'digest p-periodic-slow KEK' "$b_slow") && pass "control: p-periodic-slow followed the forced sync: ${r} [sync ${began}]" \
