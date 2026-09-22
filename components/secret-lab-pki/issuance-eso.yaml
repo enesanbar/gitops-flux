@@ -1,5 +1,7 @@
 # ISSUANCE through ESO: the generator asks Vault PKI for a NEW leaf certificate on every refresh,
-# so refreshInterval is the renewal cadence and must stay well below the certificate's ttl.
+# so refreshInterval is the renewal cadence and must stay well below the certificate's ttl. A 72h
+# leaf re-issued daily keeps the pattern observable while leaving two days of margin, at the Vault
+# role's max_ttl; every issuance also grows the mount's CRL, which is why the cadence is not hourly.
 apiVersion: generators.external-secrets.io/v1alpha1
 kind: VaultDynamicSecret
 metadata:
@@ -10,7 +12,7 @@ spec:
   method: POST
   parameters:
     common_name: leaf.kindcluster.dev
-    ttl: 1h
+    ttl: 72h
   resultType: Data
   provider:
     server: https://vault.vault.svc:8200
@@ -35,7 +37,7 @@ metadata:
   namespace: secret-lab-pki
 spec:
   refreshPolicy: Periodic
-  refreshInterval: 20m
+  refreshInterval: 24h
   target:
     name: issued-leaf
     creationPolicy: Owner

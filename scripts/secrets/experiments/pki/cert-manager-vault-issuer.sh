@@ -46,8 +46,8 @@ metadata: {name: cm-leaf, namespace: secret-lab-pki}
 spec:
   secretName: cm-leaf-tls
   dnsNames: [cm-leaf.kindcluster.dev]
-  duration: 1h      # cert-manager's minimum
-  renewBefore: 20m
+  duration: 72h     # the Vault role's max_ttl
+  renewBefore: 24h  # renewed every 48h
   privateKey: {algorithm: RSA, size: 2048}
   issuerRef: {name: vault-lab, kind: ClusterIssuer}
 YAML
