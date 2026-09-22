@@ -350,9 +350,9 @@ kubectl --context kind-local-dind-cluster -n external-secrets logs deployment/ex
 **Do not read the `SecretStore`'s condition as the backend's state.** It is the result of the store's
 own validation, which runs on its own schedule and checks only whether a login works. With Vault
 sealed, one run here caught it and turned the store `InvalidProviderConfig` within a second; another
-saw the store stay `Valid` for the whole outage. With the backend reachable but refusing — a revoked
-policy, a deleted entry, an unreachable Parameter Store endpoint, credentials that expired downstream
-— it stayed `Valid` every time. A `Valid` store proves nothing about the backend; an
+saw the store stay `Valid` for the whole outage. Through every failure after login — a revoked
+policy, a deleted entry, credentials that expired downstream — and through an unreachable Parameter
+Store endpoint, it stayed `Valid` every time. A `Valid` store proves nothing about the backend; an
 `InvalidProviderConfig` one is a real login failure.
 
 | What you see | What it means | What to do |

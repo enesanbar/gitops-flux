@@ -118,7 +118,7 @@ What the pieces of the setup above do and do not change:
 | --- | --- | --- |
 | A per-namespace Role granting token requests for one named ServiceAccount | Nothing on its own; it is what the store needs once the chart's wider grant is gone | the store depends on it once the wider grant is removed |
 | No cluster-wide token-request grant (chart ≥ 2.5.0 with `rbac.serviceAccountTokenCreate: false`, or the patch below on older charts) | The TokenRequest door: short-lived tokens for arbitrary ServiceAccounts | yes, both ways |
-| Neither | The Secret door above stays open | yes |
+| Both of the above together | Not the Secret door: a service-account-token Secret still yields any ServiceAccount's token | yes |
 
 So removing the cluster-wide token grant is **hygiene worth the one line it costs**, not a bound on
 the operator. What actually bounds it:
@@ -126,7 +126,7 @@ the operator. What actually bounds it:
 - **Scope it.** With `scopedNamespace` and `scopedRBAC`, the chart renders the controller's rules as a
   Role in that one namespace instead of a ClusterRole (checked by rendering 0.20.3). That fits an
   operator serving one namespace, not a shared one. Its certificate controller keeps cluster-wide
-  read on Secrets either way.
+  read and update on Secrets either way, though not create.
 - **Refuse the Secret door at admission** (**judgement**, not exercised here): an admission policy
   that denies the operator's ServiceAccount the creation of `kubernetes.io/service-account-token`
   Secrets closes the escalation path while leaving delivery alone.
