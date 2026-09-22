@@ -47,3 +47,4 @@ resources:
 - secret-example-sealed.yaml
 - secret-example-eso.yaml
 - secret-example-vso.yaml
+- secret-lab-pki.yaml

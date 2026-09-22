@@ -1,0 +1,57 @@
+# ISSUANCE through ESO: the generator asks Vault PKI for a NEW leaf certificate on every refresh,
+# so refreshInterval is the renewal cadence and must stay well below the certificate's ttl.
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: VaultDynamicSecret
+metadata:
+  name: lab-leaf
+  namespace: secret-lab-pki
+spec:
+  path: pki-lab/issue/lab
+  method: POST
+  parameters:
+    common_name: leaf.kindcluster.dev
+    alt_names: leaf.kindcluster.dev
+    ttl: 1h
+  resultType: Data
+  provider:
+    server: https://vault.vault.svc:8200
+    caProvider:
+      type: ConfigMap
+      name: vault-ca
+      key: ca.crt
+      namespace: secret-lab-pki
+    auth:
+      kubernetes:
+        mountPath: kubernetes
+        role: pki-eso
+        serviceAccountRef:
+          name: vault-auth
+          audiences:
+          - vault
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: issued-leaf
+  namespace: secret-lab-pki
+spec:
+  refreshPolicy: Periodic
+  refreshInterval: 20m
+  target:
+    name: issued-leaf
+    creationPolicy: Owner
+    deletionPolicy: Retain
+    template:
+      type: kubernetes.io/tls
+      engineVersion: v2
+      data:
+        tls.crt: |
+          {{ .certificate }}
+          {{ .issuing_ca }}
+        tls.key: '{{ .private_key }}'
+  dataFrom:
+  - sourceRef:
+      generatorRef:
+        apiVersion: generators.external-secrets.io/v1alpha1
+        kind: VaultDynamicSecret
+        name: lab-leaf

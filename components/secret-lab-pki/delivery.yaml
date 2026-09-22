@@ -1,0 +1,64 @@
+# DELIVERY: one externally issued certificate, kept as a platform entry, rendered into two
+# differently named typed Secrets (the island's fan-out case: every consumer names its own Secret).
+# Renewal happens outside the cluster; these only follow the source.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: wildcard-copy-a
+  namespace: secret-lab-pki
+spec:
+  refreshPolicy: Periodic
+  refreshInterval: 1m  # experiment cadence
+  secretStoreRef:
+    name: vault
+    kind: SecretStore
+  target:
+    name: wildcard-copy-a
+    creationPolicy: Owner
+    deletionPolicy: Retain
+    template:
+      type: kubernetes.io/tls
+      engineVersion: v2
+      data:
+        tls.crt: '{{ .crt }}'
+        tls.key: '{{ .key }}'
+  data:
+  - secretKey: crt
+    remoteRef:
+      key: platform/wildcard
+      property: tls.crt
+  - secretKey: key
+    remoteRef:
+      key: platform/wildcard
+      property: tls.key
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: wildcard-copy-b
+  namespace: secret-lab-pki
+spec:
+  refreshPolicy: Periodic
+  refreshInterval: 1m  # experiment cadence
+  secretStoreRef:
+    name: vault
+    kind: SecretStore
+  target:
+    name: wildcard-copy-b
+    creationPolicy: Owner
+    deletionPolicy: Retain
+    template:
+      type: kubernetes.io/tls
+      engineVersion: v2
+      data:
+        tls.crt: '{{ .crt }}'
+        tls.key: '{{ .key }}'
+  data:
+  - secretKey: crt
+    remoteRef:
+      key: platform/wildcard
+      property: tls.crt
+  - secretKey: key
+    remoteRef:
+      key: platform/wildcard
+      property: tls.key

@@ -9,8 +9,8 @@ export VAULT_CACERT="${VAULT_STATE}/ca.crt"
 export VAULT_TLS_SERVER_NAME=vault.vault.svc
 unset VAULT_TOKEN VAULT_NAMESPACE VAULT_SKIP_VERIFY
 ACTION="${1:-}"; shift || true
-case "$ACTION" in bootstrap|unseal|login|cli|snapshot|tenant-auth) ;; *)
-  echo 'Usage: vault.sh bootstrap|unseal|login|cli <vault args...>|snapshot|tenant-auth enable <kubeconfig> <api-url>|disable' >&2; exit 2;; esac
+case "$ACTION" in bootstrap|unseal|login|cli|snapshot|tenant-auth|pki) ;; *)
+  echo 'Usage: vault.sh bootstrap|unseal|login|cli <vault args...>|snapshot|tenant-auth enable <kubeconfig> <api-url>|disable [<kubeconfig>]|pki' >&2; exit 2;; esac
 test -s "$VAULT_CACERT" || { echo 'Run prepare-local.sh first.' >&2; exit 1; }
 # Pod forwarding works even while sealed; the normal Service/UI stays unready.
 # Refuse an occupied port, rather than talking to an unknown existing forward.
@@ -158,6 +158,33 @@ case "$ACTION" in
     rm "${VAULT_STATE}/login.pending.json"
     echo 'Normal operator login saved (1h TTL, 4h maximum). Source scripts/secrets/vault-env.sh for the Vault CLI.' ;;
   cli) normal_token; vault "$@" ;;
+  pki)
+    # Experiment: in-cluster issuance. A lab-only PKI mount with an internal root; two policies let
+    # ESO's generator and cert-manager's Vault issuer request leaf certificates and nothing else.
+    # Root is used for mount, role and policy administration only, as in bootstrap.
+    export VAULT_TOKEN="$(jq -r '.root_token' "${VAULT_STATE}/init.json")"
+    vault secrets list -format=json | jq -e 'has("pki-lab/")' >/dev/null || vault secrets enable -path=pki-lab pki
+    vault secrets tune -max-lease-ttl=8760h pki-lab >/dev/null
+    if ! vault read -format=json pki-lab/cert/ca 2>/dev/null | jq -e '.data.certificate | length > 0' >/dev/null; then
+      vault write -format=json pki-lab/root/generate/internal common_name="secret-lab root CA" ttl=8760h >/dev/null
+    fi
+    vault write pki-lab/config/urls issuing_certificates=https://vault.vault.svc:8200/v1/pki-lab/ca \
+      crl_distribution_points=https://vault.vault.svc:8200/v1/pki-lab/crl >/dev/null
+    vault write pki-lab/roles/lab allowed_domains=kindcluster.dev allow_subdomains=true allow_bare_domains=false \
+      key_type=rsa key_bits=2048 ttl=1h max_ttl=72h >/dev/null
+    for policy in pki-eso pki-cert-manager; do
+      vault policy write "secret-lab-${policy}" "${SECRETS_SCRIPT_DIR}/vault/policies/${policy}.hcl" >/dev/null
+    done
+    vault write auth/kubernetes/role/pki-eso bound_service_account_names=vault-auth \
+      bound_service_account_namespaces=secret-lab-pki audience=vault token_policies=secret-lab-pki-eso \
+      token_no_default_policy=true token_ttl=10m token_max_ttl=1h >/dev/null
+    # cert-manager 1.9 authenticates with a long-lived ServiceAccount token Secret, which carries the API
+    # server audience, so this role sets no audience.
+    vault write auth/kubernetes/role/pki-cert-manager bound_service_account_names=cert-manager-vault \
+      bound_service_account_namespaces=cert-manager token_policies=secret-lab-pki-cert-manager \
+      token_no_default_policy=true token_ttl=10m token_max_ttl=1h >/dev/null
+    unset VAULT_TOKEN
+    echo 'Lab PKI ready: mount pki-lab, role lab, Kubernetes-auth roles pki-eso and pki-cert-manager.' ;;
   tenant-auth)
     # Experiment: a second cluster authenticates to this Vault the way a tenant would reach a platform
     # Vault. Three mounts side by side so their operational differences can be measured:
