@@ -13,8 +13,10 @@ jq -n --arg v "$(openssl rand -base64 32 | tr -d '\n')" '{Name:"/lab-cluster00/t
 aws ssm put-parameter --cli-input-json "file://$tmp/put.json" --query Version --output text | sed 's/^/   version /'; echo "   $(el)"
 echo "step 2 (dev): add three lines to the ExternalSecret in git"
 python3 - <<'PY'
-import pathlib
+import pathlib, sys
 p = pathlib.Path("components/secret-lab-aws/external-secrets.yaml"); t = p.read_text()
+if "TRELLIS_EMBEDDING_API_KEY" in t:
+    print("   already present, leaving the file alone"); sys.exit(0)
 old = """  - secretKey: TRELLIS_LLM_API_KEY
     remoteRef:
       key: /lab-cluster00/trellis/llm
@@ -31,10 +33,9 @@ p.write_text(t.replace(old, """  - secretKey: TRELLIS_LLM_API_KEY
 # Single-parameter mapping."""))
 PY
 kubectl kustomize components/secret-lab-aws >/dev/null && echo "   render ok $(el)"
-echo "step 3 (dev): commit and push"
-git add components/secret-lab-aws/external-secrets.yaml && git commit -q -m "feat(secrets): deliver the optional embedding key from Parameter Store too
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>" && git push 2>&1 | tail -1 | sed 's/^/   /'; echo "   $(el)"
+echo "step 3 (dev): commit and push — NOT done by this script (a measurement must not write shared history)"
+git --no-pager diff --stat components/secret-lab-aws/external-secrets.yaml | sed 's/^/   /'
+echo "   commit it, then the reconcile below is step 4. $(el)"
 echo "step 4: wait for Flux, or reconcile by hand"
 $F reconcile kustomization secret-lab-aws --with-source --timeout 3m 2>&1 | tail -1 | sed 's/^/   /'; echo "   $(el)"
 echo "step 5: [wait began $(el)] the Secret carries the key: $(waitfor 180 "k2 trellis-secrets-static TRELLIS_EMBEDDING_API_KEY" 60)"
