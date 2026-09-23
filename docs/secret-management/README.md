@@ -270,9 +270,10 @@ kubectl --context kind-local-dind-cluster -n vault delete pod vault-0
 ./scripts/secrets/validate.sh
 ```
 
-Vault readiness remains false while Vault is sealed; liveness tolerates sealing
-so it does not create a restart loop. Single-member Raft cannot tolerate loss of
-its sole data copy. Retained storage is not a backup:
+Vault readiness remains false while Vault is sealed. There is deliberately no
+liveness probe: a restarted Vault is a sealed one, so a probe could only turn a
+stall, such as a laptop sleep, into a manual unseal. Single-member Raft cannot
+tolerate loss of its sole data copy. Retained storage is not a backup:
 
 ```bash
 ./scripts/secrets/sealed-key.sh backup

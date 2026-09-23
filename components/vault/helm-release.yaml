@@ -118,10 +118,10 @@ spec:
       readinessProbe:
         enabled: true
         path: /v1/sys/health?standbyok=true
+      # Off, as upstream ships it: a restart always seals Vault, so liveness can
+      # only turn a stall (every laptop sleep) into a manual unseal.
       livenessProbe:
-        enabled: true
-        path: /v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204
-        initialDelaySeconds: 60
+        enabled: false
       ingress:
         enabled: true
         ingressClassName: nginx
