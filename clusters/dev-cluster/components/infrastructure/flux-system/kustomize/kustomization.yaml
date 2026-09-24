@@ -49,4 +49,5 @@ resources:
 - secret-example-vso.yaml
 - secret-lab-pki.yaml
 - secret-lab-aws.yaml
+- aws-parameterstore.yaml
 - reloader.yaml
