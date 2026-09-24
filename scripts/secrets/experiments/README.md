@@ -36,7 +36,8 @@ what one hands-on experiment needed, kept so the measurements recorded with it c
   `ssm-parity.sh up|checks|down` does the same for the delivered-credential store: a throwaway
   cluster on chart 0.20.3 at its defaults, the stand-in credential delivered, and the two reference
   components (`aws-parameterstore`, `ssm-app-secrets`) applied unchanged; the checks compare each
-  delivered Secret's shape and value digests with the lab's and repeat the refusals and failures.
+  delivered Secret's shape and value digests with the lab's, rotate the JSON credential, prune and
+  re-apply the key-class ExternalSecret, and repeat the refusals and failures.
   It needs AWS and the lab's API (its checks compare with the lab), not the lab's Docker network, and
   holds the stand-in's key while it exists.
 - `aws/` — the lab account's IAM, run by the account owner with an IAM-admin profile, never from the

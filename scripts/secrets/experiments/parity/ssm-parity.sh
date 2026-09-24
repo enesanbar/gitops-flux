@@ -138,6 +138,18 @@ EOF
   check "and the first keeps serving it" '[ "$(esr kp $NS ssm-app)" = SecretSynced ]'
   kp -n $NS delete externalsecret ssm-app-claimant >/dev/null
 
+  # Pruned, the key-class ExternalSecret takes its Secret with it (creationPolicy Owner); re-applied
+  # from Git, it must bring back the same pinned bytes.
+  local k0 k1; k0=$(digests kp $NS ssm-app | grep -o 'ENCRYPTION_KEY:[0-9a-f]*' || true)
+  echo "   finalizers on the key-class ExternalSecret: $(kp -n $NS get externalsecret ssm-app -o jsonpath='{.metadata.finalizers}')"
+  kp -n $NS delete externalsecret ssm-app --timeout=60s >/dev/null
+  T0=$(date +%s); waitfor 60 "kp -n $NS get secret ssm-app -o name 2>/dev/null || echo gone" gone >/dev/null || true
+  check "a pruned key-class ExternalSecret takes its Secret with it" '! kp -n $NS get secret ssm-app >/dev/null 2>&1'
+  kubectl kustomize "${REPO}/components/ssm-app-secrets" | kp apply --validate=strict -f - >/dev/null
+  T0=$(date +%s); waitfor 120 "esr kp $NS ssm-app" SecretSynced >/dev/null || true
+  k1=$(digests kp $NS ssm-app | grep -o 'ENCRYPTION_KEY:[0-9a-f]*' || true)
+  check "re-applied from Git, it brings back the same pinned key" '[ -n "$k1" ] && [ "$k0" = "$k1" ]'
+
   # The credential's bytes replaced by a key AWS does not know: the next sync must fail with it,
   # which shows the store reads the Secret on every reconcile rather than a client it cached.
   kp -n external-secrets create secret generic aws-credentials --from-literal=aws_access_key_id=AKIAIOSFODNN7INVALID \
