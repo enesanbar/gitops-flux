@@ -91,8 +91,10 @@ question for an inventory, not for a path.
 - **Below the namespace, nest freely** — a component, then whatever grouping its owner chooses — with
   one rule, which `scripts/secrets/ssm.sh` enforces: **a node is a parameter or a folder, never both**.
   Otherwise `…/db` and `…/db/password` coexist and two readers disagree about which is the credential.
-- **The name is snake_case**, because it doubles as a template variable: `{{ .service_token }}` parses
-  and `{{ .service-token }}` does not. The segments above it are Kubernetes names, so kebab-case.
+- **The name is snake_case**, so that it can serve unchanged as the `secretKey` and as a template
+  variable: `{{ .service_token }}` parses and `{{ .service-token }}` does not. A JSON parameter's fields
+  follow the same rule, because `dataFrom.extract` turns them into template variables. The segments
+  above the name are Kubernetes names, so kebab-case.
 - **Fields that change together are one parameter holding a JSON object**, read with one
   `dataFrom.extract` (§5). **Measured** on 2.11.0 (`matrix/r-tenant-store.sh` row B): one write
   reached the Secret in one sync with both fields changed; on 0.20.3 the same extract delivered the
@@ -100,7 +102,8 @@ question for an inventory, not for a path.
   (read in its source). As two parameters it would be two writes, and a refresh landing between them
   delivers a new username beside an old password for a whole interval.
 - **Nothing is shared across clusters until something must be.** Then it gets a first segment of its
-  own (`/<realm>/shared-<scope>/…`), and nothing already written has to move.
+  own where the cluster would go (`/<realm>/shared-<scope>/<namespace>/…`), each reader names it as an
+  exception, and nothing already written has to move.
 - **An application that changes cluster copies its subtree** (`ssm.sh copy-tree`) and never
   regenerates it: a key follows the data it encrypts, not the cluster it runs on.
 
@@ -108,13 +111,15 @@ question for an inventory, not for a path.
 because a certificate chain can pass the standard tier's 4 KB, and one key the store's credential may
 use through Parameter Store only.
 
-The environment-first alternative, `/<environment>/<application>/<name>`, rests on IAM policies that
-glob on a prefix. On a delivered credential the policy belongs to the platform rather than to you,
-and an environment folder mixes the secrets of every cluster in that environment, whatever runs on them.
+The environment-first alternative, `/<environment>/<application>/<name>`, puts the environment where
+the identity is not: on a credential delivered per cluster, an environment folder mixes the secrets of
+every cluster in that environment, whatever runs on them, and no per-cluster policy could be written
+against it.
 
 ## 2. The store follows the identity
 
-**Rule: one store per identity.** Where each namespace can have an identity of its own — Vault's
+**Rule: one store per identity** (**Judgement**, resting on the measurements below). Where each
+namespace can have an identity of its own — Vault's
 Kubernetes auth with a token minted per namespace — a `SecretStore` in the application's namespace.
 Where the cluster is handed one credential it did not create, one `ClusterSecretStore` reading it,
 limited to the namespaces it names.
@@ -235,7 +240,7 @@ Removing it, by chart version:
   ```
 
   The index is render-specific: the rule is at 7 in a 0.20.3 render with this repository's values
-  and at 8 with the chart's defaults, because `processClusterGenerator: false` drops a rule above
+  and at 8 with the chart's defaults, because `processClusterExternalSecret: false` drops a rule above
   it. Derive it from your own render (`helm template` piped through `yq`). The `test` operation is
   what makes a wrong index safe — the render stops instead of removing a different rule — so a failed
   reconcile after a chart or values change means "re-derive the index", not "the patch is broken".
@@ -340,7 +345,8 @@ For that class:
 ### Standardize
 
 Rows whose evidence is a P-numbered check held on ESO 2.11.0 and 0.20.3 alike; rows citing
-`matrix/` were measured on 2.11.0.
+`matrix/` were measured on 2.11.0, "row A" to "row F" being `matrix/r-tenant-store.sh`;
+`parity/ssm-parity.sh` covers the delivered-credential store on 0.20.3.
 
 | Feature | Why | Evidence |
 | --- | --- | --- |
@@ -351,7 +357,7 @@ Rows whose evidence is a P-numbered check held on ESO 2.11.0 and 0.20.3 alike; r
 | `refreshPolicy: Periodic`, interval chosen from the consumer | The interval is a promise about how stale a value may be. Choose it from what the consumer does with the value, not from a default. | **Measured** that it follows: a new version reached the Secret within one 30-second interval (P2). **Judgement**: an hour suits most consumers, and anything shorter is a load decision made on the backend's behalf. |
 | `creationPolicy: Owner` | One manager per Secret, visible in the object itself. Pair it with the prune-disabled annotation (§3). | **Measured**: owner reference present (P1); garbage collection on deletion (`matrix/r12-key-class.sh`). |
 | `deletionPolicy: Retain` | A backend that answers "not found" — an outage, a policy change, a typo in a path — must not remove a Secret a pod has mounted. | **Measured**: the Secret survived its entry's deletion (P5). |
-| The store that matches the identity | A namespaced `SecretStore` with TokenRequest auth per namespace identity; one `ClusterSecretStore` with `conditions.namespaces` on a delivered credential (§2). | **Measured**, per §2. |
+| The store that matches the identity | A namespaced `SecretStore` with TokenRequest auth per namespace identity; one `ClusterSecretStore` with `conditions.namespaces` on a delivered credential (§2). | **Judgement**, with the measured limits of each shape in §2. |
 
 ### Do not standardize
 

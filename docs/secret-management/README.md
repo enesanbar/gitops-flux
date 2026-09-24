@@ -202,11 +202,12 @@ kubectl --context kind-local-dind-cluster -n secret-lab-eso annotate externalsec
 kubectl --context kind-local-dind-cluster -n external-secrets logs deployment/external-secrets --tail=50
 ```
 
-Use namespace-scoped stores by default. Store definitions and auth SAs belong to
-the namespace owner. The ClusterSecretStore/ClusterExternalSecret and push-secret
-reconcilers are disabled and cluster generators get no RBAC; enabling any is a separate trust
-decision. Further providers get their own store/auth definition without replacing
-the operator. Do not give tenants permission to edit another team's stores.
+Use a namespaced store where each namespace has an identity of its own, and the one
+`ClusterSecretStore` where the cluster is handed a single credential (CONVENTIONS.md §2). The
+`ClusterSecretStore` reconciler is on for that reason; the `ClusterExternalSecret` and push-secret
+reconcilers are off and cluster generators get no RBAC, and enabling any of them is a separate
+trust decision. Store definitions and auth SAs belong to the namespace owner. Further providers get
+their own store/auth definition without replacing the operator. Do not give tenants permission to edit another team's stores.
 Generated Secrets are controller-owned; do not apply a competing Secret manifest.
 Removing an ExternalSecret garbage-collects its owned Secret; removing a provider
 value retains the last Kubernetes value and reports an error (`deletionPolicy:
@@ -297,15 +298,21 @@ Four objects, in this order. `<app>` is both the namespace and the path segment.
 
 A cluster that is handed one credential has one store, `components/aws-parameterstore/`, so there
 is no identity or role per application: onboarding is one edit, some writes and a copy.
-`components/ssm-app-secrets/` is the worked example, and in this lab the stand-in credential comes
-from `scripts/secrets/aws-credentials.sh tenant a`.
+`components/ssm-app-secrets/` is the worked example. In this lab the AWS side comes first:
+`scripts/secrets/experiments/aws/tenant-iam.sh apply`, run by the account owner, lets the lab user
+write the realm, and `scripts/secrets/aws-credentials.sh tenant a` puts the stand-in credential
+where a platform would.
 
 1. **List the namespace on the store**: add it to `spec.conditions[0].namespaces` in
    `components/aws-parameterstore/cluster-secret-store.yaml`. An `ExternalSecret` in an unlisted
    namespace fails, and its events say `using cluster store "aws-parameterstore" is not allowed from
    namespace "<ns>": denied by spec.condition`. The list decides **which namespaces** may use the
-   store and nothing about **which paths** they read: review that every `remoteRef.key` begins with
-   `/devops/<cluster>/<its own namespace>/` (CONVENTIONS.md §2).
+   store and nothing about **which paths** they read. Hold each `ExternalSecret` to its own subtree
+   in review and CI: every `spec.data[].remoteRef.key` and `spec.dataFrom[].extract.key` begins with
+   `/devops/<cluster>/<its own namespace>/` or is on a named list of exceptions (the certificate
+   another team keeps is one), and no `dataFrom.find` uses the store. CI sees only what comes through
+   Git; for an `ExternalSecret` created through the API, RBAC on `externalsecrets` in the listed
+   namespaces is the boundary (CONVENTIONS.md §2).
 
 2. **Write the values** under `/devops/<cluster>/<namespace>/` with `scripts/secrets/ssm.sh`. It takes
    the value on standard input, always writes an Advanced SecureString under the lab's KMS key, and
@@ -326,10 +333,16 @@ from `scripts/secrets/aws-credentials.sh tenant a`.
    the bytes as they are, which is what a PEM file wants. A credential whose fields change together
    is one JSON parameter, read with one `dataFrom.extract`, so a rotation arrives in one sync.
 
-3. **The ExternalSecrets**, copied from `components/ssm-app-secrets/external-secrets.yaml` with the
+3. **The Namespace and the ExternalSecrets**, copied from `components/ssm-app-secrets/` with the
    namespace, paths and key names changed, in a component wired the usual three places, its Flux
-   `Kustomization` depending on `aws-parameterstore`. Verify as above: the condition, then the events,
-   then key names and lengths.
+   `Kustomization` depending on `aws-parameterstore`. Verify the store, then each `ExternalSecret`'s
+   condition and events, then key names and lengths:
+
+   ```bash
+   kubectl --context kind-local-dind-cluster get clustersecretstore aws-parameterstore
+   kubectl --context kind-local-dind-cluster -n <app> get externalsecret
+   kubectl --context kind-local-dind-cluster -n <app> describe externalsecret <name>   # Events: the cause
+   ```
 
 An application moving to another cluster takes its subtree with it. Copy it, never regenerate it:
 a restored database only opens under the key it was written with.
@@ -408,14 +421,14 @@ own validation, which runs on its own schedule and checks only whether a login w
 sealed, one run here caught it and turned the store `InvalidProviderConfig` within a second; another
 saw the store stay `Valid` for the whole outage. Through every failure after login — a revoked
 policy, a deleted entry, credentials that expired downstream — and through an unreachable Parameter
-Store endpoint, it stayed `Valid` every time. A `Valid` store proves nothing about the backend; an
-`InvalidProviderConfig` one is a real login failure.
+Store endpoint, it stayed `Valid` every time. A `Valid` store proves nothing about the backend; on
+a store that logs in, as the Vault stores do, an `InvalidProviderConfig` one is a real login failure.
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
 | `SecretSynced` | The last sync succeeded. It does **not** mean the value is current: under `deletionPolicy: Retain` a Secret keeps its last good value while syncs fail, so check `REFRESHED`. | Nothing. |
 | `SecretSyncedError` (store `Valid` or not) | A sync failed. **This is the common shape of every outage**, because the store often has not noticed yet. The event says which: `Secret does not exist` for a missing entry or a mistyped path (the two read the same, for Vault and Parameter Store alike, and never as Parameter Store's own `ParameterNotFound`); `permission denied` when a Vault policy does not cover the path; an access denial with a request id; an expired token; a refused or timed-out connection when the backend is down; a sealed-Vault error from the login. | Follow the event. For a backend error, check the backend's health before anything in the cluster. For a path, compare `remoteRef.key` with a listing of its parent. Never delete the ExternalSecret to "reset" it: that garbage-collects the Secret. |
-| store `InvalidProviderConfig` | The store's last login failed: the backend is sealed or unreachable, or the store's CA, server, auth mount or role is wrong. | The backend's health **first**, the store definition second. |
+| store `InvalidProviderConfig` (a store that logs in, such as Vault's) | The store's last login failed: the backend is sealed or unreachable, or the store's CA, server, auth mount or role is wrong. | The backend's health **first**, the store definition second. |
 | `SecretDeleted`, and the Secret is gone | `deletionPolicy: Delete` met a backend that answered "not found". | Restore the entry, then change the policy to `Retain`. |
 
 On a store that reads a delivered credential the condition means even less: for a static key the

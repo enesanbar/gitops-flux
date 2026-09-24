@@ -19,7 +19,8 @@ what one hands-on experiment needed, kept so the measurements recorded with it c
   `secret-lab-pki`. Run `vault.sh pki` first (the mount, role and policies), then this script; the
   `secret-lab-pki` component itself needs neither. `delete` revokes the token and removes all three.
 - `parity/` — the operator-version parity gate. `parity-gate.sh up` builds a throwaway kind cluster
-  on this lab's Docker network running ESO 0.20.3 with the lab's own values, reaching the lab Vault
+  on this lab's Docker network running ESO 0.20.3 with the lab's values (`eso-values.yaml`, which notes
+  the one key it keeps different), reaching the lab Vault
   through a temporary NodePort and the tenant auth mounts (it refuses to run while the `tenant-auth/`
   experiment holds them), and replays `components/trellis-secrets/` there byte-for-byte except for
   the store's auth mount and role. `parity-checks.sh <label> <kubectl target args>` then runs the
@@ -36,7 +37,8 @@ what one hands-on experiment needed, kept so the measurements recorded with it c
   cluster on chart 0.20.3 at its defaults, the stand-in credential delivered, and the two reference
   components (`aws-parameterstore`, `ssm-app-secrets`) applied unchanged; the checks compare each
   delivered Secret's shape and value digests with the lab's and repeat the refusals and failures.
-  It needs AWS, not the lab network, and holds the stand-in's key while it exists.
+  It needs AWS and the lab's API (its checks compare with the lab), not the lab's Docker network, and
+  holds the stand-in's key while it exists.
 - `aws/` — the lab account's IAM, run by the account owner with an IAM-admin profile, never from the
   cluster. `base-iam.sh` creates what every Parameter Store experiment shares: an experiment user
   scoped to one prefix, a read-only role it may assume for the Vault-minted shape, a customer KMS key,
