@@ -32,6 +32,16 @@ what one hands-on experiment needed, kept so the measurements recorded with it c
   any failure. The replay copies the lab application's live key-encryption key into the
   throwaway's etcd for as long as it exists. The parity scripts use the Python `yq` (the jq wrapper,
   `yq -y`/`yq -c`), not the Go implementation of the same name.
+- `aws/` — the lab account's IAM, run by the account owner with an IAM-admin profile, never from the
+  cluster. `base-iam.sh` creates what every Parameter Store experiment shares: an experiment user
+  scoped to one prefix, a read-only role it may assume for the Vault-minted shape, a customer KMS key,
+  and one access key written to a 0600 file. `tenant-iam.sh plan|apply|teardown` adds the stand-in
+  for the one credential a tenant cluster is handed: it widens the experiment policy to the cluster
+  realm `/devops/dev-cluster/` and the foreign realm `/dev-generic/`, creates a user that may only
+  `ssm:GetParameter` there and decrypt through Parameter Store, and writes its two access keys
+  straight to custody (`aws/tenant/a`, `aws/tenant/b`) so a rotation can be rehearsed. It refuses an
+  account that lacks the base user and key. Tear down in reverse: `tenant-iam.sh teardown`, then
+  `TEARDOWN=1 base-iam.sh`.
 - `matrix/` — the rotation and failure/recovery rows, one script per row group, each printing
   statuses, key names, lengths and timings only. `lib.sh` is sourced by the others; export
   `SECRET_STATE_DIR`, and for `r1-backend-unavailable.sh` also `S5` (the release values file) and
