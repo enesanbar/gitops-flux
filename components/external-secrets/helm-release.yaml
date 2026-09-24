@@ -27,7 +27,9 @@ spec:
     replicaCount: 1
     leaderElect: true
     installCRDs: true
-    processClusterStore: false
+    # On, as on a tenant cluster: a tenant is handed one credential, and one ClusterSecretStore
+    # reads it for every application (docs/secret-management/CONVENTIONS.md §2).
+    processClusterStore: true
     processClusterExternalSecret: false
     processPushSecret: false
     processClusterPushSecret: false
