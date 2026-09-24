@@ -11,30 +11,67 @@ echo "account=$ACCOUNT region=$REGION prefix=$PREFIX"
 POLICY_ARN="arn:aws:iam::${ACCOUNT}:policy/${POLICY_NAME}"
 
 # ---------------------------------------------------------------------------------------------
-# Teardown. Run when the experiment is over; it reverses steps 1-7 in dependency order and exits before
-# they run. Run tenant-iam.sh teardown first: its preflight needs this user and this key to exist. The KMS
-# key cannot be deleted immediately, only scheduled (7 days is the minimum AWS allows).
+# Teardown. Run when the experiment is over; it reverses steps 1-7 and exits before they run.
+# tenant-iam.sh teardown goes first, and this refuses while its user exists: once this user and key
+# are gone, neither script could remove that user's keys and parameters. The KMS key cannot be
+# deleted immediately, only scheduled (7 days is the minimum AWS allows).
 #   TEARDOWN=1 base-iam.sh
 # ---------------------------------------------------------------------------------------------
 if [ "${TEARDOWN:-}" = "1" ]; then
+  # present | absent: a not-found error means absent; any other error stops the teardown.
+  state_of() { local out; if out=$("$@" 2>&1 >/dev/null); then echo present; return; fi
+    case "$out" in *NoSuchEntity*|*NotFoundException*) echo absent ;; *) echo "${out:-$* failed}" >&2; return 1 ;; esac; }
+  gone() { local out; out=$("$@" 2>&1 >/dev/null) && return 0
+    case "$out" in *NoSuchEntity*|*NotFoundException*|*ParameterNotFound*) return 0 ;; *) echo "$out" >&2; exit 1 ;; esac; }
+  # The sweep below deletes recursively with an admin profile: a stray exported PREFIX=/ would take
+  # every parameter in the account with it.
+  [ "$PREFIX" = /lab-cluster00 ] || { echo "Teardown sweeps ${PREFIX}; it refuses any prefix but /lab-cluster00." >&2; exit 1; }
+  CONFIG="${SECRET_STATE_DIR:-}/aws/config.json"
+  if [ -s "$CONFIG" ]; then
+    EXPECTED=$(jq -r '.reader_role_arn | split(":")[4]' "$CONFIG")
+    [ "$REGION" = "$(jq -r .region "$CONFIG")" ] || { echo "REGION=$REGION, but custody names $(jq -r .region "$CONFIG")." >&2; exit 1; }
+  else
+    EXPECTED="${EXPECTED_ACCOUNT:?export SECRET_STATE_DIR (the lab custody) or EXPECTED_ACCOUNT to name the lab account}"
+  fi
+  [ "$ACCOUNT" = "$EXPECTED" ] || { echo "Profile $AWS_PROFILE is account $ACCOUNT; the lab is $EXPECTED." >&2; exit 1; }
+  state=$(state_of aws iam get-user --user-name eso-lab-tenant)
+  [ "$state" = absent ] || { echo "eso-lab-tenant still exists: run tenant-iam.sh teardown first." >&2; exit 1; }
   echo "== teardown =="
-  KEY_ID=$(aws kms describe-key --key-id "$KEY_ALIAS" --region "$REGION" --query KeyMetadata.KeyId --output text 2>/dev/null || true)
-  for k in $(aws iam list-access-keys --user-name "$USER_NAME" --query 'AccessKeyMetadata[].AccessKeyId' --output text 2>/dev/null); do
-    aws iam delete-access-key --user-name "$USER_NAME" --access-key-id "$k" && echo "   access key deleted"
+  KEY_ID=""
+  state=$(state_of aws kms describe-key --key-id "$KEY_ALIAS" --region "$REGION")
+  [ "$state" = present ] && KEY_ID=$(aws kms describe-key --key-id "$KEY_ALIAS" --region "$REGION" --query KeyMetadata.KeyId --output text)
+  state=$(state_of aws iam get-user --user-name "$USER_NAME")
+  if [ "$state" = present ]; then
+    keys=$(aws iam list-access-keys --user-name "$USER_NAME" --query 'AccessKeyMetadata[].AccessKeyId' --output text)
+    for k in $keys; do
+      [ "$k" = None ] || { gone aws iam delete-access-key --user-name "$USER_NAME" --access-key-id "$k"; echo "   access key deleted"; }
+    done
+    gone aws iam detach-user-policy --user-name "$USER_NAME" --policy-arn "$POLICY_ARN"
+  fi
+  state=$(state_of aws iam get-policy --policy-arn "$POLICY_ARN")
+  if [ "$state" = present ]; then
+    versions=$(aws iam list-policy-versions --policy-arn "$POLICY_ARN" --query 'Versions[?!IsDefaultVersion].VersionId' --output text)
+    for v in $versions; do [ "$v" = None ] || gone aws iam delete-policy-version --policy-arn "$POLICY_ARN" --version-id "$v"; done
+    gone aws iam delete-policy --policy-arn "$POLICY_ARN"
+    echo "   policy deleted"
+  fi
+  gone aws iam delete-user --user-name "$USER_NAME"; echo "   user gone"
+  gone aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name "$ROLE_NAME"
+  gone aws iam delete-role --role-name "$ROLE_NAME"; echo "   role gone"
+  names=$(aws ssm describe-parameters --region "$REGION" --parameter-filters "Key=Path,Option=Recursive,Values=${PREFIX}" \
+    --query 'Parameters[].Name' --output text)
+  for p in $names; do [ "$p" = None ] || { gone aws ssm delete-parameter --region "$REGION" --name "$p"; echo "   parameter $p deleted"; }; done
+  # Scheduled before its alias goes: an unscheduled key without an alias is found again only by list-keys.
+  if [ -n "$KEY_ID" ]; then
+    aws kms schedule-key-deletion --key-id "$KEY_ID" --pending-window-in-days 7 --region "$REGION" >/dev/null
+    echo "   key scheduled for deletion in 7 days"
+    gone aws kms delete-alias --alias-name "$KEY_ALIAS" --region "$REGION"
+  fi
+  echo "== residue (every line must read absent)"
+  for check in "iam get-user --user-name $USER_NAME" "iam get-policy --policy-arn $POLICY_ARN" "iam get-role --role-name $ROLE_NAME"; do
+    r=$(state_of aws $check) || r=ERROR   # $check splits into its arguments on purpose
+    echo "   $r  $check"
   done
-  aws iam detach-user-policy --user-name "$USER_NAME" --policy-arn "$POLICY_ARN" 2>/dev/null && echo "   policy detached"
-  for v in $(aws iam list-policy-versions --policy-arn "$POLICY_ARN" --query 'Versions[?!IsDefaultVersion].VersionId' --output text 2>/dev/null); do
-    aws iam delete-policy-version --policy-arn "$POLICY_ARN" --version-id "$v"
-  done
-  aws iam delete-policy --policy-arn "$POLICY_ARN" 2>/dev/null && echo "   policy deleted"
-  aws iam delete-user --user-name "$USER_NAME" 2>/dev/null && echo "   user deleted"
-  aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name "$ROLE_NAME" 2>/dev/null && echo "   role policy deleted"
-  aws iam delete-role --role-name "$ROLE_NAME" 2>/dev/null && echo "   role deleted"
-  for p in $(aws ssm describe-parameters --parameter-filters "Key=Path,Values=${PREFIX}/,Option=Recursive" --region "$REGION" --query 'Parameters[].Name' --output text 2>/dev/null); do
-    aws ssm delete-parameter --name "$p" --region "$REGION" && echo "   parameter $p deleted"
-  done
-  aws kms delete-alias --alias-name "$KEY_ALIAS" --region "$REGION" 2>/dev/null && echo "   key alias deleted"
-  [ -n "$KEY_ID" ] && aws kms schedule-key-deletion --key-id "$KEY_ID" --pending-window-in-days 7 --region "$REGION" >/dev/null 2>&1 && echo "   key scheduled for deletion in 7 days"
   echo "teardown done"
   exit 0
 fi
@@ -84,6 +121,9 @@ aws iam get-role --role-name "$ROLE_NAME" --query 'Role.{Arn:Arn,MaxSession:MaxS
 echo "== 7. ONE access key, written to a 0600 file rather than to this terminal =="
 OUT="${SECRET_STATE_DIR:-$HOME/.eso-groundwork}"; mkdir -p "$OUT"; chmod 700 "$OUT"
 umask 077
+# With it on, the CLI records every response, the new secret included, in ~/.aws/cli/history.
+history=$(aws configure get cli_history 2>/dev/null || true)
+[ "$history" != enabled ] || { echo "cli_history is enabled for $AWS_PROFILE; turn it off before minting a key." >&2; exit 1; }
 aws iam create-access-key --user-name "$USER_NAME" --query 'AccessKey.{id:AccessKeyId,secret:SecretAccessKey}' --output json > "$OUT/new-access-key.json"
 chmod 600 "$OUT/new-access-key.json"
 echo "   written to $OUT/new-access-key.json (id and secret; nothing was printed)"
