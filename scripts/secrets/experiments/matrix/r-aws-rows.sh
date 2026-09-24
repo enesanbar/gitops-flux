@@ -25,7 +25,7 @@ $K -n $NS delete externalsecret bad-template-aws bad-name-aws --ignore-not-found
 
 echo "== ESO controller restarted right after an SSM write =="
 before=$(k2 llm-key-only TRELLIS_LLM_API_KEY); T0=$(date -u +%s)
-aws ssm put-parameter --name /lab-cluster00/trellis/llm --type String --value "rot-$(openssl rand -hex 30)" --overwrite --query Version --output text | sed 's/^/   new version /'
+printf 'rot-%s' "$(openssl rand -hex 30)" | aws ssm put-parameter --name /lab-cluster00/trellis/llm --type String --value file:///dev/stdin --overwrite --query Version --output text | sed 's/^/   new version /'
 $K -n external-secrets rollout restart deploy/external-secrets >/dev/null
 for i in $(seq 1 40); do l=$(k2 llm-key-only TRELLIS_LLM_API_KEY); [ "$l" != "$before" ] && { echo "   $(el) Secret updated across the controller restart (b64len $before -> $l)"; break; }; sleep 5; done
 
