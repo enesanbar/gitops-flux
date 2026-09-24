@@ -30,7 +30,8 @@ lab_aws() {
     aws "$@" )
 }
 key_id() { cat "$SECRET_STATE_DIR/aws/tenant/$1/access_key_id"; }
-key_status() { lab_aws iam update-access-key --user-name eso-lab-tenant --access-key-id "$(key_id "$1")" --status "$2" || fail "could not set key $1 $2"; }
+set_key() { lab_aws iam update-access-key --user-name eso-lab-tenant --access-key-id "$(key_id "$1")" --status "$2"; }
+key_status() { set_key "$1" "$2" || fail "could not set key $1 $2"; }
 key_statuses() { lab_aws iam list-access-keys --user-name eso-lab-tenant --output json | jq -r '[.AccessKeyMetadata[].Status] | sort | join(",")'; }
 latest_version() { lab_aws ssm describe-parameters --parameter-filters "Key=Name,Option=Equals,Values=$1" --output json | jq -r '.Parameters[0].Version'; }
 # A credential that is not a key AWS knows, in the shape a platform delivers.
@@ -51,30 +52,36 @@ css() { $K get clustersecretstore aws-parameterstore -o jsonpath='{.status.condi
 refreshed() { $K -n "$1" get externalsecret "$2" -o jsonpath='{.status.refreshTime}' 2>/dev/null; }
 # Force a sync and report how it ended: synced once its refreshTime moves past the one read before the
 # request (no host clock involved, so a drifting node clock cannot fake it), failed once the condition
-# reads SecretSyncedError, pending otherwise.
+# reads SecretSyncedError, pending otherwise. Expecting a success (a fourth argument of synced), the
+# SecretSyncedError the sync before left behind is not this sync's result, so it keeps polling.
 sync_outcome() {
-  local ns=$1 es=$2 before i r
+  local ns=$1 es=$2 polls=${3:-12} want=${4:-} before i r
   before=$(refreshed "$ns" "$es"); sync "$ns" "$es"
-  for i in $(seq 1 "${3:-12}"); do
+  for i in $(seq 1 "$polls"); do
     sleep 5; r=$(refreshed "$ns" "$es")
     [ -n "$r" ] && [ "$r" != "$before" ] && [ "$(es "$ns" "$es")" = SecretSynced ] && { echo synced; return; }
-    [ "$(es "$ns" "$es")" = SecretSyncedError ] && { echo failed; return; }
+    [ "$want" != synced ] && [ "$(es "$ns" "$es")" = SecretSyncedError ] && { echo failed; return; }
   done
-  echo pending
+  if [ "$(es "$ns" "$es")" = SecretSyncedError ]; then echo failed; else echo pending; fi
 }
 revalidate() { $K annotate clustersecretstore aws-parameterstore force-validate="$(date +%s%N)" --overwrite >/dev/null; }
 out_of_the_way() { $K delete namespace "$OUT" --ignore-not-found --wait=false >/dev/null
   $K -n $NS delete externalsecret probe-cross-namespace ssm-app-claimant --ignore-not-found >/dev/null
   lab_aws ssm delete-parameter --name "$PROBE" >/dev/null 2>&1 || true; }
 
+# Runs as the exit trap, so a step that fails is reported and the rest still run: stopping at the first
+# would leave the store on whatever credential the interrupted row put there.
 restore() {
+  local incomplete=""
   echo "-- restore"
-  key_status a Active; key_status b Active
-  "$A" tenant a >/dev/null
-  revalidate
+  set_key a Active || incomplete+=" key-a"
+  set_key b Active || incomplete+=" key-b"
+  "$A" tenant a >/dev/null || incomplete+=" delivery"
+  revalidate || incomplete+=" revalidate"
   out_of_the_way
-  $F reconcile kustomization ssm-app-secrets --timeout 3m >/dev/null 2>&1
+  $F reconcile kustomization ssm-app-secrets --timeout 3m >/dev/null 2>&1 || incomplete+=" flux"
   echo "restored: stand-in keys $(key_statuses); store $(css); reference ExternalSecrets $(for e in "${REFERENCE[@]}"; do printf '%s ' "$(es $NS "$e")"; done)"
+  [ -z "$incomplete" ] || { echo "RESTORE INCOMPLETE:$incomplete"; exit 1; }
 }
 trap restore EXIT
 echo "tenant store rows start=$(now) store=$(css) rows=$ROWS"
@@ -144,18 +151,20 @@ echo "== D. the delivered credential replaced underneath the store"
 deliver_unknown; T0=$(date -u +%s); o=$(sync_outcome $NS ssm-app-worker)
 echo "D1 a key AWS does not know: next sync $o within $(el); store $(css); event: $(cause $NS ssm-app-worker)"
 [ "$o" = failed ] || fail "the store did not use the replaced credential"
-deliver a; T0=$(date -u +%s); o=$(sync_outcome $NS ssm-app-worker)
+deliver a; T0=$(date -u +%s); o=$(sync_outcome $NS ssm-app-worker 12 synced)
 echo "D2 key a back: next sync $o within $(el)"; [ "$o" = synced ] || fail "key a did not work again"
-deliver b; T0=$(date -u +%s); o=$(sync_outcome $NS ssm-app-worker)
+deliver b; T0=$(date -u +%s); o=$(sync_outcome $NS ssm-app-worker 12 synced)
 echo "D3 rotated to key b, both valid: next sync $o within $(el)"; [ "$o" = synced ] || fail "key b did not work"
 d0=$(kd $NS ssm-app-worker BROKER_PASSWORD)
 key_status b Inactive; T0=$(date -u +%s)
 for i in $(seq 1 36); do o=$(sync_outcome $NS ssm-app-worker 2); [ "$o" = failed ] && break; sleep 5; done
-echo "D4 key b (in use) deactivated: first failed sync $(el) later; store $(css); Secret kept: $([ "$(kd $NS ssm-app-worker BROKER_PASSWORD)" = "$d0" ] && echo yes || echo NO)"
+kept=$([ "$(kd $NS ssm-app-worker BROKER_PASSWORD)" = "$d0" ] && echo yes || echo NO)
+echo "D4 key b (in use) deactivated: first failed sync $(el) later; store $(css); Secret kept: $kept"
 echo "   condition: $(msg $NS ssm-app-worker)"; echo "   event: $(cause $NS ssm-app-worker)"
 [ "$o" = failed ] || fail "the deactivation never took effect within the window"
+[ "$kept" = yes ] || fail "the Secret changed while syncs failed"
 key_status b Active; T0=$(date -u +%s)
-for i in $(seq 1 36); do o=$(sync_outcome $NS ssm-app-worker 2); [ "$o" = synced ] && break; sleep 5; done
+for i in $(seq 1 36); do o=$(sync_outcome $NS ssm-app-worker 2 synced); [ "$o" = synced ] && break; sleep 5; done
 echo "D5 key b reactivated: first successful sync $(el) later"; [ "$o" = synced ] || fail "key b did not come back"
 deliver a
 fi
@@ -166,7 +175,7 @@ $K -n $NS get externalsecret ssm-app -o json | jq '{apiVersion, kind, metadata: 
   $K apply -f - >/dev/null || fail "claimant"
 T0=$(date -u +%s); r=$(waitfor 60 "es $NS ssm-app-claimant" SecretOwnedByOther) || fail "the claimant was not refused as owned by another: $r"
 echo "a second ExternalSecret for the same Secret: $r; condition: $(msg $NS ssm-app-claimant); event: $(cause $NS ssm-app-claimant)"
-o=$(sync_outcome $NS ssm-app); echo "   the first, synced again: $o"; [ "$o" = synced ] || fail "the first stopped serving"
+o=$(sync_outcome $NS ssm-app 12 synced); echo "   the first, synced again: $o"; [ "$o" = synced ] || fail "the first stopped serving"
 $K -n $NS delete externalsecret ssm-app-claimant >/dev/null || fail "claimant cleanup"
 k2=$(kd $NS ssm-app ENCRYPTION_KEY); T0=$(date -u +%s)
 $K -n $NS delete externalsecret ssm-app >/dev/null || fail "delete the key-class ExternalSecret"
@@ -184,11 +193,15 @@ T0=$(date -u +%s); o=$(sync_outcome $NS ssm-app-worker)
 echo "F1 before the store notices: store $(css); next sync $o; condition: $(msg $NS ssm-app-worker); event: $(cause $NS ssm-app-worker)"
 [ "$o" = failed ] || fail "a sync without the credential did not fail"
 revalidate; T0=$(date -u +%s); r=$(waitfor 120 css InvalidProviderConfig) || fail "the store did not notice on a forced validation: $r"
+# F1 already left the ExternalSecret failed, so the outcome alone cannot show that this sync failed on
+# the store; the event naming the store does.
 o=$(sync_outcome $NS ssm-app-worker)
-echo "F2 after a forced validation: store InvalidProviderConfig $r; next sync $o; event: $(cause $NS ssm-app-worker)"
-echo "   Secret kept: $([ "$(kd $NS ssm-app-worker BROKER_PASSWORD)" != ABSENT ] && [ "$(kd $NS ssm-app-worker BROKER_PASSWORD)" != ERR ] && echo yes || echo NO)"
+e2=$(waitfor 60 "cause $NS ssm-app-worker | grep -c 'is not ready'" 1) || fail "no sync failed on the store after the validation: $e2"
+echo "F2 after a forced validation: store InvalidProviderConfig $r; next sync $o, failing on the store ${e2#1 }; event: $(cause $NS ssm-app-worker)"
+kept=$([ "$(kd $NS ssm-app-worker BROKER_PASSWORD)" != ABSENT ] && [ "$(kd $NS ssm-app-worker BROKER_PASSWORD)" != ERR ] && echo yes || echo NO)
+echo "   Secret kept: $kept"; [ "$kept" = yes ] || fail "the Secret went while the store was not ready"
 deliver a; revalidate; T0=$(date -u +%s); r=$(waitfor 120 css Valid) || fail "the store did not recover: $r"
-o=$(sync_outcome $NS ssm-app-worker); echo "F3 credential back, validation forced: store Valid $r; next sync $o"
+o=$(sync_outcome $NS ssm-app-worker 12 synced); echo "F3 credential back, validation forced: store Valid $r; next sync $o"
 [ "$o" = synced ] || fail "the sync did not recover"
 fi
 echo "tenant store rows end=$(now)"
