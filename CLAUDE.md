@@ -107,7 +107,7 @@ their bootstrap or recovery state. Private custody lives in `.local/secret-manag
 (gitignored, **not mounted into kind**); Vault's encrypted Raft data lives on pool-1.
 `bootstrap.sh` restores the sealing keyring and public Vault CA trust before Flux.
 Vault needs manual unseal after restart. Never regenerate keys to bypass missing
-recovery material. `TASK-0669.02` is the later comparison, not this installation.
+recovery material.
 
 These secrets are per-machine key material and never committed. All are applied by `bootstrap.sh` and can be re-run standalone:
 
