@@ -3,14 +3,16 @@
 #
 # A throwaway kind cluster installs chart 0.20.3 at its defaults, receives the stand-in credential
 # the way a tenant receives its own, and applies components/aws-parameterstore/ and
-# components/ssm-app-secrets/ unchanged. It needs AWS only, not the lab's network. Subcommands:
+# components/ssm-app-secrets/ unchanged. It needs AWS and the lab's API, not the lab's Docker
+# network: checks compare each value with the lab's, write one new version of the shared parameter
+# /devops/dev-cluster/ssm-app/database (a JSON rotation) and force-sync the lab's copy. Subcommands:
 #   up      build it, deliver tenant key a, apply the two components, wait for them to sync
 #   checks  the behaviours the lab showed, PASS/FAIL, exit status the number of failures; where both
 #           clusters read the same parameters, each delivered value is compared with the lab's
 #   down    remove everything up created
 # The throwaway holds the stand-in's key and the example values for as long as it exists, which is
 # why down is not optional. Run from a worktree with SECRET_STATE_DIR pointing at the main checkout's
-# private custody.
+# custody directory, .local/secret-management/dev-cluster (the one holding aws/).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -59,6 +61,8 @@ lab_aws() {
 revalidate() { kp annotate clustersecretstore aws-parameterstore force-validate="$(date +%s%N)" --overwrite >/dev/null; }
 
 up() {
+  [ -r "${SECRET_STATE_DIR}/aws/tenant/a/access_key_id" ] ||
+    { echo "no tenant key a under ${SECRET_STATE_DIR}/aws; SECRET_STATE_DIR is the directory holding aws/" >&2; exit 2; }
   mkdir -p "$STATE"; chmod 700 "$STATE"
   UP_DONE=0
   trap '[ "$UP_DONE" = 1 ] || { echo "[$(el)] up did not finish; tearing down what it created" >&2; down; }' EXIT
@@ -143,10 +147,12 @@ EOF
   local k0 k1; k0=$(digests kp $NS ssm-app | grep -o 'ENCRYPTION_KEY:[0-9a-f]*' || true)
   echo "   finalizers on the key-class ExternalSecret: $(kp -n $NS get externalsecret ssm-app -o jsonpath='{.metadata.finalizers}')"
   kp -n $NS delete externalsecret ssm-app --timeout=60s >/dev/null
-  T0=$(date +%s); waitfor 60 "kp -n $NS get secret ssm-app -o name 2>/dev/null || echo gone" gone >/dev/null || true
+  T0=$(date +%s); r=$(waitfor 60 "kp -n $NS get secret ssm-app -o name 2>/dev/null || echo gone" gone) || true
+  echo "   pruned: its Secret $r"
   check "a pruned key-class ExternalSecret takes its Secret with it" '! kp -n $NS get secret ssm-app >/dev/null 2>&1'
   kubectl kustomize "${REPO}/components/ssm-app-secrets" | kp apply --validate=strict -f - >/dev/null
-  T0=$(date +%s); waitfor 120 "esr kp $NS ssm-app" SecretSynced >/dev/null || true
+  T0=$(date +%s); r=$(waitfor 120 "esr kp $NS ssm-app" SecretSynced) || true
+  echo "   re-applied: $r"
   k1=$(digests kp $NS ssm-app | grep -o 'ENCRYPTION_KEY:[0-9a-f]*' || true)
   check "re-applied from Git, it brings back the same pinned key" '[ -n "$k1" ] && [ "$k0" = "$k1" ]'
 
@@ -156,12 +162,13 @@ EOF
     --from-literal=aws_secret_access_key=not-a-real-secret-key --dry-run=client -o yaml |
     kp apply --server-side --field-manager=tenant-bootstrap --force-conflicts -f - >/dev/null
   T0=$(date +%s)
-  for _ in $(seq 1 12); do sync kp $NS ssm-app-worker; sleep 5; [ "$(esr kp $NS ssm-app-worker)" = SecretSyncedError ] && break; done
-  why=$(cause kp $NS ssm-app-worker); echo "   unknown key @$(el): $why"
+  n=0; for _ in $(seq 1 12); do n=$((n+1)); sync kp $NS ssm-app-worker; sleep 5; [ "$(esr kp $NS ssm-app-worker)" = SecretSyncedError ] && break; done
+  why=$(cause kp $NS ssm-app-worker); echo "   unknown key: failed on forced sync $n @$(el): $why"
   check "a replaced credential is used on the next sync" '[[ $why == *UnrecognizedClient* || $why == *InvalidClientTokenId* ]]'
   check "the store stays Valid on a dead key" '[ "$(store kp)" = Valid ]'
   deliver a; T0=$(date +%s)
-  for _ in $(seq 1 12); do sync kp $NS ssm-app-worker; sleep 5; [ "$(esr kp $NS ssm-app-worker)" = SecretSynced ] && break; done
+  n=0; for _ in $(seq 1 12); do n=$((n+1)); sync kp $NS ssm-app-worker; sleep 5; [ "$(esr kp $NS ssm-app-worker)" = SecretSynced ] && break; done
+  echo "   real key back: $(esr kp $NS ssm-app-worker) on forced sync $n @$(el)"
   check "the real key back, the next sync recovers" '[ "$(esr kp $NS ssm-app-worker)" = SecretSynced ]'
 
   kp -n external-secrets delete secret aws-credentials >/dev/null; T0=$(date +%s)
