@@ -94,10 +94,11 @@ question for an inventory, not for a path.
 - **The name is snake_case**, because it doubles as a template variable: `{{ .service_token }}` parses
   and `{{ .service-token }}` does not. The segments above it are Kubernetes names, so kebab-case.
 - **Fields that change together are one parameter holding a JSON object**, read with one
-  `dataFrom.extract` (§5). **Measured** (`matrix/r-tenant-store.sh` row B; `parity/ssm-parity.sh` on
-  0.20.3): one write reached the Secret in one sync with both fields changed. As two parameters it
-  would be two writes, and a refresh landing between them delivers a new username beside an old
-  password for a whole interval.
+  `dataFrom.extract` (§5). **Measured** on 2.11.0 (`matrix/r-tenant-store.sh` row B): one write
+  reached the Secret in one sync with both fields changed; on 0.20.3 the same extract delivered the
+  same fields (`parity/ssm-parity.sh`), and the controller reads the parameter once on both versions
+  (read in its source). As two parameters it would be two writes, and a refresh landing between them
+  delivers a new username beside an old password for a whole interval.
 - **Nothing is shared across clusters until something must be.** Then it gets a first segment of its
   own (`/<realm>/shared-<scope>/…`), and nothing already written has to move.
 - **An application that changes cluster copies its subtree** (`ssm.sh copy-tree`) and never
@@ -154,7 +155,8 @@ the backend would still see one caller. So one `ClusterSecretStore` reads it
   credential Secret itself was missing — after which `ExternalSecret`s failed with
   `ClusterSecretStore "<name>" is not ready`. **Measured** too (row D): the store reads the credential
   Secret on every reconcile, so a platform's rotation needs nothing from the cluster; with the old key
-  revoked, eight forced syncs over two minutes all went through on the new one.
+  revoked, eight forced syncs over two minutes all went through on the new one, and on 0.20.3 a
+  credential replaced by an unknown key failed the very next sync (`parity/ssm-parity.sh`).
 
 This repository turns the `ClusterSecretStore` reconciler on for that reason. `ClusterExternalSecret`
 stays off (§5).
@@ -343,7 +345,7 @@ Rows whose evidence is a P-numbered check held on ESO 2.11.0 and 0.20.3 alike; r
 | Feature | Why | Evidence |
 | --- | --- | --- |
 | Explicit `data[]` mapping | The `ExternalSecret` states every key it produces, so a reviewer can see the Secret's shape without reading the backend, and a key that disappears upstream becomes an error rather than an absence. | **Measured**: a deleted entry turned the ExternalSecret `SecretSyncedError` while the Secret kept its key (P5). |
-| `dataFrom.extract` for one entry | The right tool for a credential *pair*: a username and password replaced together are one entry — a Vault entry, or one Parameter Store parameter holding JSON — and it reads that entry once, where a `remoteRef.property` per field reads it once per field. | **Measured**: every field of one entry, and only those (P1); on Parameter Store both fields of a rotation arrived in one sync (`matrix/r-tenant-store.sh` row B, and on 0.20.3 `parity/ssm-parity.sh`). |
+| `dataFrom.extract` for one entry | The right tool for a credential *pair*: a username and password replaced together are one entry — a Vault entry, or one Parameter Store parameter holding JSON — and it reads that entry once, where a `remoteRef.property` per field reads it once per field. | **Measured**: every field of one entry, and only those (P1); on Parameter Store both fields of a rotation arrived in one sync (`matrix/r-tenant-store.sh` row B, 2.11.0), and 0.20.3 delivered the same fields (`parity/ssm-parity.sh`). |
 | `template.type` with `engineVersion: v2` | The only way to produce a typed Secret (`kubernetes.io/tls`, a dockerconfigjson) from arbitrary backend fields. | **Measured**: a typed `kubernetes.io/tls` Secret from two fields (P1). |
 | `remoteRef.version` on a key that shares a Secret | The guard for the key class when the consumer takes one Secret (§4). | **Measured**: a new version reaches nothing, the other keys keep refreshing (P2, P3); on Parameter Store the same, with the token beside the pinned key following its new version in 5 seconds (row A), and 0.20.3 delivering the same pinned bytes (`parity/ssm-parity.sh`). |
 | `refreshPolicy: Periodic`, interval chosen from the consumer | The interval is a promise about how stale a value may be. Choose it from what the consumer does with the value, not from a default. | **Measured** that it follows: a new version reached the Secret within one 30-second interval (P2). **Judgement**: an hour suits most consumers, and anything shorter is a load decision made on the backend's behalf. |
