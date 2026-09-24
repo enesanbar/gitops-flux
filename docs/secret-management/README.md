@@ -341,8 +341,10 @@ the stand-in credential where a platform would.
    `Kustomization` depending on `aws-parameterstore` and carrying the `healthCheckExprs` of
    `ssm-app-secrets`: without them Flux reads an `ExternalSecret` with no status yet, or a stale Ready
    after a spec change, as healthy. Copy the expression whole: it skips the generation check for
-   `CreatedOnce`, and for `Periodic` with a zero interval, which never sync again once synced and
-   would otherwise hold the group back for good after their first spec edit. Verify the store, then each `ExternalSecret`'s
+   `CreatedOnce`, and for `Periodic` with an interval of zero or less, which never sync again once
+   synced and would otherwise hold the group back for good after their first spec edit. A spec edit
+   to one of those reaches its Secret only when the `ExternalSecret` is deleted and recreated, which
+   re-reads the backend: pin a key's version first (the key class, below). Verify the store, then each `ExternalSecret`'s
    condition and events, then key names and lengths:
 
    ```bash
