@@ -293,6 +293,51 @@ Four objects, in this order. `<app>` is both the namespace and the path segment.
    ever applied with `kubectl apply` carries the whole object, values included, in
    `last-applied-configuration`.
 
+### Onboarding an application on a delivered credential
+
+A cluster that is handed one credential has one store, `components/aws-parameterstore/`, so there
+is no identity or role per application: onboarding is one edit, some writes and a copy.
+`components/ssm-app-secrets/` is the worked example, and in this lab the stand-in credential comes
+from `scripts/secrets/aws-credentials.sh tenant a`.
+
+1. **List the namespace on the store**: add it to `spec.conditions[0].namespaces` in
+   `components/aws-parameterstore/cluster-secret-store.yaml`. An `ExternalSecret` in an unlisted
+   namespace fails, and its events say `using cluster store "aws-parameterstore" is not allowed from
+   namespace "<ns>": denied by spec.condition`. The list decides **which namespaces** may use the
+   store and nothing about **which paths** they read: review that every `remoteRef.key` begins with
+   `/devops/<cluster>/<its own namespace>/` (CONVENTIONS.md §2).
+
+2. **Write the values** under `/devops/<cluster>/<namespace>/` with `scripts/secrets/ssm.sh`. It takes
+   the value on standard input, always writes an Advanced SecureString under the lab's KMS key, and
+   refuses a path outside the layout, a path that is already a folder, and a write with no description:
+
+   ```bash
+   export SECRET_STATE_DIR=/path/to/gitops-flux/.local/secret-management/dev-cluster
+   openssl rand -hex 32 | ./scripts/secrets/ssm.sh put /devops/dev-cluster/<app>/service_token \
+     --description "Service token. Generated here; rotate by writing a new version, then roll the consumer."
+   openssl rand -base64 32 | ./scripts/secrets/ssm.sh put /devops/dev-cluster/<app>/encryption_key --key-class \
+     --description "Encryption key. Rotates only through the application's re-wrap; consumers pin a version."
+   { printf 'app_user\n'; openssl rand -hex 16; } | jq -Rsc 'split("\n") | {username: .[0], password: .[1]}' | \
+     ./scripts/secrets/ssm.sh put /devops/dev-cluster/<app>/database --description "Database account, one JSON object."
+   ./scripts/secrets/ssm.sh list /devops/dev-cluster/<app>
+   ```
+
+   `put` strips one trailing newline, because `openssl` and `jq` both end with one; `--exact` keeps
+   the bytes as they are, which is what a PEM file wants. A credential whose fields change together
+   is one JSON parameter, read with one `dataFrom.extract`, so a rotation arrives in one sync.
+
+3. **The ExternalSecrets**, copied from `components/ssm-app-secrets/external-secrets.yaml` with the
+   namespace, paths and key names changed, in a component wired the usual three places, its Flux
+   `Kustomization` depending on `aws-parameterstore`. Verify as above: the condition, then the events,
+   then key names and lengths.
+
+An application moving to another cluster takes its subtree with it. Copy it, never regenerate it:
+a restored database only opens under the key it was written with.
+
+```bash
+./scripts/secrets/ssm.sh copy-tree /devops/<old-cluster>/<app> /devops/<new-cluster>/<app>
+```
+
 ### Rotating a value
 
 Write the new version in the backend; nothing in the cluster needs touching.
@@ -306,6 +351,17 @@ openssl rand -base64 32 | tr -d '\n' | \
 `tr -d '\n'` is not decoration: `openssl` and `jq -r` both append a newline, and that newline is
 delivered into the Secret and into whatever reads it. `kv put` **replaces the whole entry** — any
 other field in it is gone afterwards — so to change one field of several, use `kv patch`.
+
+On Parameter Store a new value is a new version of the parameter, and `ssm.sh` asks for `--overwrite`
+so it is never an accident:
+
+```bash
+openssl rand -hex 32 | ./scripts/secrets/ssm.sh put /devops/dev-cluster/<app>/service_token --overwrite \
+  --description "Service token. Generated here; rotate by writing a new version, then roll the consumer."
+```
+
+A parameter tagged as a key refuses even that without `--new-key-version`, and a new key version
+reaches nothing until the commit that moves its consumers' pins.
 
 The Secret follows within the refresh interval. To stop waiting:
 
@@ -361,6 +417,17 @@ Store endpoint, it stayed `Valid` every time. A `Valid` store proves nothing abo
 | `SecretSyncedError` (store `Valid` or not) | A sync failed. **This is the common shape of every outage**, because the store often has not noticed yet. The event says which: `Secret does not exist` for a missing entry or a mistyped path (the two read the same, for Vault and Parameter Store alike, and never as Parameter Store's own `ParameterNotFound`); `permission denied` when a Vault policy does not cover the path; an access denial with a request id; an expired token; a refused or timed-out connection when the backend is down; a sealed-Vault error from the login. | Follow the event. For a backend error, check the backend's health before anything in the cluster. For a path, compare `remoteRef.key` with a listing of its parent. Never delete the ExternalSecret to "reset" it: that garbage-collects the Secret. |
 | store `InvalidProviderConfig` | The store's last login failed: the backend is sealed or unreachable, or the store's CA, server, auth mount or role is wrong. | The backend's health **first**, the store definition second. |
 | `SecretDeleted`, and the Secret is gone | `deletionPolicy: Delete` met a backend that answered "not found". | Restore the entry, then change the policy to `Retain`. |
+
+On a store that reads a delivered credential the condition means even less: for a static key the
+store's validation only checks that the credential Secret holds both fields, and makes no call to
+AWS. Four shapes of their own:
+
+| What you see | What it means | What to do |
+| --- | --- | --- |
+| `SecretSyncedError`, events `UnrecognizedClientException: The security token included in the request is invalid`, store `Valid` | The delivered key is dead: rotated away, revoked or deleted. A revocation took about three minutes to bite here, which is how long IAM took to propagate it. | Ask the platform what happened to the credential, and check when the delivered Secret last changed. Nothing in this repository fixes it. |
+| store `InvalidProviderConfig`, events `ClusterSecretStore "<name>" is not ready` | The credential Secret the store reads is missing or lacks a field. | The platform's delivery first. Secrets already delivered keep their last values meanwhile. |
+| events `… is not allowed from namespace "<ns>": denied by spec.condition` | The namespace is not on the store's list. | Onboarding step 1 above. |
+| `SecretOwnedByOther` (on operator 0.20.3: `SecretSyncedError`, message `secret is owned by another ExternalSecret`) | A second `ExternalSecret` targets a Secret another one owns — usually a rename under `prune: disabled`, which leaves the old one serving it. | Delete the old `ExternalSecret` on purpose, then force-sync the new one. The Secret is absent in between, because the deletion garbage-collects it. |
 
 ### Restarting on change: what a reloader costs
 

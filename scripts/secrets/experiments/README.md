@@ -32,6 +32,11 @@ what one hands-on experiment needed, kept so the measurements recorded with it c
   any failure. The replay copies the lab application's live key-encryption key into the
   throwaway's etcd for as long as it exists. The parity scripts use the Python `yq` (the jq wrapper,
   `yq -y`/`yq -c`), not the Go implementation of the same name.
+  `ssm-parity.sh up|checks|down` does the same for the delivered-credential store: a throwaway
+  cluster on chart 0.20.3 at its defaults, the stand-in credential delivered, and the two reference
+  components (`aws-parameterstore`, `ssm-app-secrets`) applied unchanged; the checks compare each
+  delivered Secret's shape and value digests with the lab's and repeat the refusals and failures.
+  It needs AWS, not the lab network, and holds the stand-in's key while it exists.
 - `aws/` — the lab account's IAM, run by the account owner with an IAM-admin profile, never from the
   cluster. `base-iam.sh` creates what every Parameter Store experiment shares: an experiment user
   scoped to one prefix, a read-only role it may assume for the Vault-minted shape, a customer KMS key,

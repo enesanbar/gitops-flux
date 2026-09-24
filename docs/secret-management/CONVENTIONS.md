@@ -5,7 +5,9 @@ attached. Each rule says which kind it is: **Measured** names the script under
 `scripts/secrets/experiments/` that observed it, and **Judgement** marks a design call that no
 experiment can settle. Which operator version a measurement covers follows from the script: the
 parity checks (`parity/parity-checks.sh`, check ids P0–P6 and the token-minting check) ran with the
-same script against ESO 2.11.0 and 0.20.3; the rows under `matrix/` ran on the lab's 2.11.0 only.
+same script against ESO 2.11.0 and 0.20.3; `parity/ssm-parity.sh` replays the delivered-credential
+store of §2 on 0.20.3 against the parameters the lab reads; the rows under `matrix/` ran on the
+lab's 2.11.0 only.
 
 The scope is **delivery**: getting a value that lives in an external store into a Kubernetes Secret,
 and from there into a process. Issuance (minting a certificate, creating a database user) is a
@@ -21,9 +23,13 @@ Put in the path only what is **stable** and what a **policy has to cut on**. Eve
 owning team, ticket, cost centre, who asked for it — belongs in metadata, because a path is an
 identifier that consumers hard-code and metadata is not.
 
-Two things qualify: the **environment** (a policy boundary, an account boundary, and the thing you
-must never let leak across) and the **application** (the unit that owns, rotates and loses a
-secret). Team does not: teams reorganize, and every rename breaks every consumer.
+What qualifies follows from where the identity sits. With a Vault identity per namespace, two things:
+the **environment** (a policy boundary, an account boundary, and the thing you must never let leak
+across) and the **application** (the unit that owns, rotates and loses a secret). With a credential
+delivered per cluster, the **cluster** and the **namespace** take those two places, for the same two
+reasons (the Parameter Store layout below). A team does not qualify — teams reorganize, and every
+rename breaks every consumer — except as the one prefix that separates teams sharing an account: a
+realm names the owner of part of the account, not a line on an org chart.
 
 ### Vault (KV v2)
 
@@ -45,23 +51,7 @@ The alternative, `<environment>/<team>/<application>/<purpose>` in a single moun
 the team segment is the unstable one, and a single mount means one policy mistake spans production
 and staging.
 
-### AWS Systems Manager Parameter Store
-
-**Recommended:** `/<environment>/<application>/<name>`, one parameter per value.
-
-```
-/prod/billing-api/db-password
-/prod/billing-api/signing-key
-/stage/billing-api/db-password
-```
-
-Environment leads because IAM policies glob on a path prefix (`arn:aws:ssm:…:parameter/prod/*`), and
-because environments usually already sit in separate accounts — the path then reinforces a boundary
-that already exists instead of inventing a new one. Parameter Store has no equivalent of a Vault
-entry with several fields, so a credential pair is two parameters composed back together by the
-`ExternalSecret`; `dataFrom.find` can enumerate a prefix instead, and §5 explains why you should not.
-
-### How the two shapes score
+### How the two Vault shapes score
 
 | Criterion | Environment-mount + `app/purpose` | `env/team/app/purpose`, one mount |
 | --- | --- | --- |
@@ -78,23 +68,96 @@ entry with several fields, so a credential pair is two parameters composed back 
 The one thing the rejected shape does better is answering "what does my team own" — which is a
 question for an inventory, not for a path.
 
-## 2. Namespaced stores, not cluster-scoped ones
+### AWS Systems Manager Parameter Store, on a delivered credential
 
-**Rule: a `SecretStore` in the application's namespace, never a `ClusterSecretStore`, unless the
-material is platform-owned and identical everywhere.** In this repository the cluster-scoped
-controllers are switched off in the operator's own values, so the rule is enforced rather than
-documented.
+**Recommended:** `/<realm>/<cluster>/<namespace>/<any nesting>/<name>`, one value per parameter.
 
-The reason is identity. A namespaced store authenticates as **that namespace's** ServiceAccount, so
-the backend policy can be written per application and the audit trail names the application. A
-cluster-scoped store authenticates once, for everybody, so the backend sees one identity reading
-everything and the only remaining boundary is Kubernetes RBAC on who may create an `ExternalSecret`
-— a boundary that is easy to widen by accident and invisible from the backend side.
+```
+/devops/staging-cluster-a/billing/encryption_key
+/devops/staging-cluster-a/billing/database                -> {"username": "…", "password": "…"}
+/devops/staging-cluster-a/billing/worker/broker/password
+/devops/production-cluster-a/billing/encryption_key
+```
+
+- **The realm** (`/devops/`) is one team's prefix in an account several teams share: an
+  organisational boundary, and a security one only if the credential's policy makes it so. Material
+  another team owns stays under that team's realm and is read from there, never copied into yours.
+- **The cluster comes first**, because it is the unit of identity: a platform that hands each cluster
+  its own credential can scope that credential to `/<realm>/<cluster>/*`, and a layout that starts
+  anywhere else leaves such a policy nothing to cut on. The environment is not lost as long as cluster
+  names begin with it: `/<realm>/production-*` still selects every production cluster.
+- **The namespace comes next**, because an `ExternalSecret` already carries it: review and CI can hold
+  every `ExternalSecret` to `/<realm>/<cluster>/<its own namespace>/` and name each exception (§2).
+- **Below the namespace, nest freely** — a component, then whatever grouping its owner chooses — with
+  one rule, which `scripts/secrets/ssm.sh` enforces: **a node is a parameter or a folder, never both**.
+  Otherwise `…/db` and `…/db/password` coexist and two readers disagree about which is the credential.
+- **The name is snake_case**, because it doubles as a template variable: `{{ .service_token }}` parses
+  and `{{ .service-token }}` does not. The segments above it are Kubernetes names, so kebab-case.
+- **Fields that change together are one parameter holding a JSON object**, read with one
+  `dataFrom.extract` (§5). **Measured** (`matrix/r-tenant-store.sh` row B; `parity/ssm-parity.sh` on
+  0.20.3): one write reached the Secret in one sync with both fields changed. As two parameters it
+  would be two writes, and a refresh landing between them delivers a new username beside an old
+  password for a whole interval.
+- **Nothing is shared across clusters until something must be.** Then it gets a first segment of its
+  own (`/<realm>/shared-<scope>/…`), and nothing already written has to move.
+- **An application that changes cluster copies its subtree** (`ssm.sh copy-tree`) and never
+  regenerates it: a key follows the data it encrypts, not the cluster it runs on.
+
+`ssm.sh` writes every parameter as an Advanced SecureString under one customer-managed key: Advanced
+because a certificate chain can pass the standard tier's 4 KB, and one key the store's credential may
+use through Parameter Store only.
+
+The environment-first alternative, `/<environment>/<application>/<name>`, rests on IAM policies that
+glob on a prefix. On a delivered credential the policy belongs to the platform rather than to you,
+and an environment folder mixes the secrets of every cluster in that environment, whatever runs on them.
+
+## 2. The store follows the identity
+
+**Rule: one store per identity.** Where each namespace can have an identity of its own — Vault's
+Kubernetes auth with a token minted per namespace — a `SecretStore` in the application's namespace.
+Where the cluster is handed one credential it did not create, one `ClusterSecretStore` reading it,
+limited to the namespaces it names.
+
+### A namespace with an identity of its own
+
+A namespaced store authenticates as **that namespace's** ServiceAccount, so the backend policy can
+be written per application and the audit trail names the application. A cluster-scoped store over the
+same backend would authenticate once, for everybody: the backend would see one identity reading
+everything, and the only boundary left would be Kubernetes RBAC on who may create an
+`ExternalSecret` — easy to widen by accident, and invisible from the backend side.
 
 The identity is a short-lived token minted through the TokenRequest API with an audience, never a
 ServiceAccount token Secret mounted into a pod. Grant the operator `create` on
 `serviceaccounts/token` for **that one ServiceAccount by name** (`resourceNames`), which is what
 `components/trellis-secrets/rbac.yaml` does.
+
+### A cluster with one delivered credential
+
+A platform that hands a cluster one cloud credential — a Secret it writes into the operator's
+namespace and rotates there — gives every application on the cluster the same identity at the
+backend. A store per namespace would copy that credential into every namespace and gain nothing, since
+the backend would still see one caller. So one `ClusterSecretStore` reads it
+(`components/aws-parameterstore/`), and three things hold for it:
+
+- **The namespace list is all the store enforces.** **Measured** (`matrix/r-tenant-store.sh` row C;
+  the same wording on 0.20.3 in `parity/ssm-parity.sh`): an `ExternalSecret` in an unlisted namespace
+  is refused, and only its events say why — `… is not allowed from namespace "<ns>": denied by
+  spec.condition`.
+- **It does not scope paths.** **Measured** (row C): an `ExternalSecret` in a listed namespace read a
+  path belonging to another namespace within seconds. Which paths each `ExternalSecret` may read is
+  therefore a rule for review and CI — its own subtree, plus a named list of exceptions such as a
+  certificate another team keeps — and not something the store enforces.
+- **Its condition says nothing about the backend.** For a static key the operator's validation only
+  resolves the credential it was given and calls nothing (read in the provider's `Validate()`, 0.20.3
+  and 2.11.0). **Measured** (rows D and F): the store stayed `Valid` through a revoked key while every
+  sync failed with `UnrecognizedClientException`, and went `InvalidProviderConfig` only when the
+  credential Secret itself was missing — after which `ExternalSecret`s failed with
+  `ClusterSecretStore "<name>" is not ready`. **Measured** too (row D): the store reads the credential
+  Secret on every reconcile, so a platform's rotation needs nothing from the cluster; with the old key
+  revoked, eight forced syncs over two minutes all went through on the new one.
+
+This repository turns the `ClusterSecretStore` reconciler on for that reason. `ClusterExternalSecret`
+stays off (§5).
 
 ### What the operator can do, whatever its Roles say
 
@@ -178,11 +241,11 @@ Removing it, by chart version:
   removing that Role then breaks it. The patch operations were applied to the live ClusterRole and to
   chart renders; the `HelmRelease` wrapper itself was not run through Flux here.
 
-Cluster-scoped is the right answer for exactly one shape: material the platform owns, that is byte
--identical in every namespace, and whose reader identity genuinely is "the cluster" — a private
-registry pull credential, for instance. Even then, prefer one `ExternalSecret` per namespace over a
-`ClusterExternalSecret`, because a single object that writes into every namespace is also a single
-object that can empty every namespace.
+Cluster-scoped is the right answer for two shapes: the delivered credential above, and material the
+platform owns that is byte-identical in every namespace and whose reader identity genuinely is "the
+cluster" — a private registry pull credential, for instance. Either way, prefer one `ExternalSecret`
+per namespace over a `ClusterExternalSecret`, because a single object that writes into every namespace
+is also a single object that can empty every namespace.
 
 ## 3. One authoritative manager per Secret
 
@@ -280,13 +343,13 @@ Rows whose evidence is a P-numbered check held on ESO 2.11.0 and 0.20.3 alike; r
 | Feature | Why | Evidence |
 | --- | --- | --- |
 | Explicit `data[]` mapping | The `ExternalSecret` states every key it produces, so a reviewer can see the Secret's shape without reading the backend, and a key that disappears upstream becomes an error rather than an absence. | **Measured**: a deleted entry turned the ExternalSecret `SecretSyncedError` while the Secret kept its key (P5). |
-| `dataFrom.extract` for one entry | The right tool for a credential *pair*: a username and password replaced together are one entry, and naming both fields separately invites them to drift apart. | **Measured**: every field of one entry, and only those (P1). |
+| `dataFrom.extract` for one entry | The right tool for a credential *pair*: a username and password replaced together are one entry — a Vault entry, or one Parameter Store parameter holding JSON — and it reads that entry once, where a `remoteRef.property` per field reads it once per field. | **Measured**: every field of one entry, and only those (P1); on Parameter Store both fields of a rotation arrived in one sync (`matrix/r-tenant-store.sh` row B, and on 0.20.3 `parity/ssm-parity.sh`). |
 | `template.type` with `engineVersion: v2` | The only way to produce a typed Secret (`kubernetes.io/tls`, a dockerconfigjson) from arbitrary backend fields. | **Measured**: a typed `kubernetes.io/tls` Secret from two fields (P1). |
-| `remoteRef.version` on a key that shares a Secret | The guard for the key class when the consumer takes one Secret (§4). | **Measured**: a new version reaches nothing, the other keys keep refreshing (P2, P3). |
+| `remoteRef.version` on a key that shares a Secret | The guard for the key class when the consumer takes one Secret (§4). | **Measured**: a new version reaches nothing, the other keys keep refreshing (P2, P3); on Parameter Store the same, with the token beside the pinned key following its new version in 5 seconds (row A), and 0.20.3 delivering the same pinned bytes (`parity/ssm-parity.sh`). |
 | `refreshPolicy: Periodic`, interval chosen from the consumer | The interval is a promise about how stale a value may be. Choose it from what the consumer does with the value, not from a default. | **Measured** that it follows: a new version reached the Secret within one 30-second interval (P2). **Judgement**: an hour suits most consumers, and anything shorter is a load decision made on the backend's behalf. |
 | `creationPolicy: Owner` | One manager per Secret, visible in the object itself. Pair it with the prune-disabled annotation (§3). | **Measured**: owner reference present (P1); garbage collection on deletion (`matrix/r12-key-class.sh`). |
 | `deletionPolicy: Retain` | A backend that answers "not found" — an outage, a policy change, a typo in a path — must not remove a Secret a pod has mounted. | **Measured**: the Secret survived its entry's deletion (P5). |
-| A namespaced `SecretStore` with TokenRequest auth | §2. | **Measured**, with the chart-version caveat in §2. |
+| The store that matches the identity | A namespaced `SecretStore` with TokenRequest auth per namespace identity; one `ClusterSecretStore` with `conditions.namespaces` on a delivered credential (§2). | **Measured**, per §2. |
 
 ### Do not standardize
 
@@ -294,7 +357,8 @@ Rows whose evidence is a P-numbered check held on ESO 2.11.0 and 0.20.3 alike; r
 | --- | --- | --- |
 | `dataFrom.find` | It reports success for whatever it found. Remove a key from the matched set and it disappears from the Secret while the `ExternalSecret` stays green — the failure mode with no signal, which is the worst kind. Use it for exploration, never for delivery. | **Measured** on Vault with both operator versions (P6) and on Parameter Store (`matrix/r-aws-rows.sh`). |
 | `deletionPolicy: Delete` on anything mounted | It converts a backend blip into a removed Secret, and a removed Secret under a `subPath` mount is not something a running pod recovers from. | **Measured**: the Secret was deleted within a minute of its entry (P4). |
-| `ClusterSecretStore` and `ClusterExternalSecret` | §2. Their reconcilers are off in this repository's operator values. | **Judgement**. |
+| `ClusterExternalSecret` | One object that writes into every namespace can also empty every namespace; one `ExternalSecret` per namespace instead. Its reconciler is off in this repository's operator values. | **Judgement**. |
+| A `ClusterSecretStore` without `conditions` | Every namespace, present and future, could read through it. | **Measured** that the list refuses what it does not name (row C). |
 | Generators for anything with a lifetime | A generator mints a credential with an expiry the Kubernetes object knows nothing about. The Secret keeps looking correct after the credential behind it has expired, and the first signal is the application failing. Acceptable only where the lifetime is managed deliberately, with margin, and someone owns the renewal. | **Measured** (`matrix/r-sts-expiry.sh`): the consuming store failed while the ExternalSecret holding the minted credentials still reported success. |
 | `PushSecret` | It syncs Kubernetes → external store, which is backwards: it makes the cluster the source of truth for material the cluster is supposed to consume. | **Judgement**. |
 | `creationPolicy: Merge` into a foreign Secret | Refused by the operator, and rightly (§3). | **Measured** (`matrix/r12-key-class.sh`). |
@@ -343,7 +407,8 @@ Two properties that are easy to assume and are not true:
   (`matrix/r-aws-unreachable.sh`) and expired downstream credentials (`matrix/r-sts-expiry.sh`) left it
   `Valid` every time. The signal is the `ExternalSecret`'s condition, and the cause is in its events:
   its message says only which side failed — reading from the backend, or writing the Secret.
-  **Measured**.
+  **Measured**. On a delivered credential it is weaker still: the store's validation of a static
+  key calls nothing, and it read `Valid` through a revoked key (§2, row D).
 
 ## 8. Five shapes, end to end
 
