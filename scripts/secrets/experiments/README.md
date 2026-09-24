@@ -71,3 +71,8 @@ what one hands-on experiment needed, kept so the measurements recorded with it c
   rotated, revoked and restored underneath the store, two ExternalSecrets claiming one Secret, and the
   credential Secret going missing. `ROWS=ADE` runs a subset; it toggles the stand-in's IAM access keys
   and waits out their propagation rather than reading once.
+  `r-flux-health.sh` shows why the `ssm-app-secrets` Kustomization carries `healthCheckExprs`: with
+  the operator stopped, an ExternalSecret Flux has just recreated (no status yet) and one whose spec
+  moved past its last synced generation both keep the group from reading Ready, until the operator is
+  back. It stops the operator for a few minutes, and an ExternalSecret deleted meanwhile would wait in
+  Terminating on the operator's cleanup finalizer.
