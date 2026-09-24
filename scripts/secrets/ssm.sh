@@ -8,6 +8,9 @@
 #   ssm.sh list <prefix>                                names and metadata
 #   ssm.sh describe <name>                              metadata, tags and version history
 #   ssm.sh copy-tree <from-prefix> <to-prefix>          an application moving to another cluster
+#     an AWS error part-way through leaves the parameters already written at <to-prefix>; delete
+#     them before retrying. A copy carries every superseded value too, including one that was
+#     rotated out because it leaked.
 #
 #   openssl rand -base64 32 | ssm.sh put /devops/dev-cluster/<app>/encryption_key --key-class \
 #     --description "Encryption key; generated here; rotates only through the application's re-wrap"
@@ -164,12 +167,21 @@ describe() {
     jq -r '.Parameters[] | [.Version, .LastModifiedDate, ((.Labels // []) | join(","))] | @tsv'
 }
 
+# Parameter Store keeps the last 100 versions; a history that is no longer 1..N cannot be replayed
+# with the numbers a pin names. The third argument says what the refusal left behind.
+refuse_version_gap() {
+  local name=$1 versions=$2 trailing=$3 count
+  count=$(printf '%s' "$versions" | jq length)
+  printf '%s' "$versions" | jq -e --argjson count "$count" 'sort == [range(1; $count + 1)]' >/dev/null ||
+    die "$name: its versions are not 1..$count, so a copy could not keep the numbers its pins name. $trailing"
+}
+
 # Copies every parameter below one prefix to another for an application that changes clusters,
 # replaying each one's whole version history in order: a pin names a version NUMBER, so a copy that
 # kept only the latest value as version 1 would hand a pinned consumer different bytes. A key is
 # copied, never regenerated: a restored database only opens under the key it was written with.
 copy_tree() {
-  local from=${1:?from}; local to=${2:?to} names name rel history count i class n flags=()
+  local from=${1:?from}; local to=${2:?to} names name rel history versions count i class n flags=() labels ltext
   from=${from%/}; to=${to%/}
   check_prefix "$from"; check_prefix "$to"
   [ "$from" != "$to" ] || die "copy-tree: the prefixes are the same."
@@ -177,21 +189,33 @@ copy_tree() {
   [ "$n" = 0 ] || die "$to already holds parameters; copy-tree only fills an empty prefix."
   names=$(aws_ssm describe-parameters --parameter-filters "Key=Path,Option=Recursive,Values=$from" --output json | jq -r '.Parameters[].Name')
   [ -n "$names" ] || die "$from holds no parameters; nothing was copied."
-  for name in $names; do check_name "$to${name#"$from"}" 0; done
+  # Every history is validated, undecrypted, before anything is written: a gap discovered in one
+  # parameter must never leave an earlier, valid parameter already copied for a retry to trip over.
+  for name in $names; do
+    check_name "$to${name#"$from"}" 0
+    versions=$(aws_ssm get-parameter-history --name "$name" --output json | jq -c '[.Parameters[].Version]')
+    refuse_version_gap "$name" "$versions" "Nothing was copied."
+  done
   for name in $names; do
     rel=${name#"$from"}
     history=$(aws_ssm get-parameter-history --name "$name" --with-decryption --output json | jq -c '.Parameters | sort_by(.Version)')
+    versions=$(printf '%s' "$history" | jq -c '[.[].Version]')
+    refuse_version_gap "$name" "$versions" "Nothing more was copied."
     count=$(printf '%s' "$history" | jq length)
-    # Parameter Store keeps the last 100 versions; a history that no longer starts at 1 cannot be
-    # replayed with the numbers its pins name.
-    printf '%s' "$history" | jq -e '[.[].Version] == [range(1; length + 1)]' >/dev/null ||
-      die "$name: its versions are not 1..$count, so a copy could not keep the numbers its pins name. Nothing more was copied."
     class=$(tag_value "$name" class)
     for i in $(seq 0 $((count - 1))); do
       flags=(--exact --description "$(printf '%s' "$history" | jq -r --argjson i "$i" --arg n "$name" '.[$i].Description // ("Copied from " + $n)')")
       if [ "$i" = 0 ]; then [ "$class" = key ] && flags+=(--key-class)
       else flags+=(--overwrite); [ "$class" = key ] && flags+=(--new-key-version); fi
       printf '%s' "$history" | jq -j --argjson i "$i" '.[$i].Value' | put "$to$rel" "${flags[@]}" >/dev/null
+      # A label is what keeps Parameter Store from dropping the version a pin names as older
+      # versions age out past 100, so that protection survives the copy only if the label lands
+      # on the same version number at the destination.
+      ltext=$(printf '%s' "$history" | jq -r --argjson i "$i" '(.[$i].Labels // []) | join(" ")')
+      read -r -a labels <<<"$ltext"
+      if [ "${#labels[@]}" -gt 0 ]; then
+        aws_ssm label-parameter-version --name "$to$rel" --parameter-version "$((i + 1))" --labels "${labels[@]}" >/dev/null
+      fi
     done
     echo "$to$rel: versions 1-$count copied"
   done
@@ -203,5 +227,5 @@ case "${1:-}" in
   list) refuse_cli_history; list "${2:?prefix}" ;;
   describe) refuse_cli_history; describe "${2:?name}" ;;
   copy-tree) refuse_cli_history; copy_tree "${2:-}" "${3:-}" ;;
-  *) sed -n '2,16p' "$0" >&2; exit 2 ;;
+  *) sed -n '2,19p' "$0" >&2; exit 2 ;;
 esac

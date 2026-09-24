@@ -63,6 +63,15 @@ class FakeParameterStore:
         self.params[b["ResourceId"]]["Tags"] = tags + b["Tags"]
         return 200, {}
 
+    def LabelParameterVersion(self, b):
+        target = b.get("ParameterVersion") or self.params[b["Name"]]["Version"]
+        labels = b["Labels"]
+        for v in self.params[b["Name"]]["versions"]:
+            v["Labels"] = [l for l in v.get("Labels", []) if l not in labels]  # one version at a time
+            if v["Version"] == target:
+                v["Labels"] += labels
+        return 200, {"InvalidLabels": [], "ParameterVersion": target}
+
     def GetParameterHistory(self, b):
         return 200, {"Parameters": [{"Name": b["Name"], "Type": "SecureString", "LastModifiedDate": 0, "Labels": [], **v}
                                     for v in self.params[b["Name"]]["versions"]]}
@@ -267,6 +276,36 @@ class SsmHelperTests(unittest.TestCase):
         self.assertNotIn("s3cr3t", r.stdout + r.stderr)
         self.refused(self.run_helper("copy-tree", "/devops/old/trellis", "/devops/new/trellis"), "already holds parameters")
         self.refused(self.run_helper("copy-tree", "/devops/old/trelis", "/devops/newer/trellis"), "holds no parameters")
+
+    def test_copy_tree_replays_labels_onto_the_same_version_numbers(self):
+        self.assertEqual(self.put("/devops/old/app/kek", "s3cr3t-v1", "--key-class").returncode, 0)
+        self.assertEqual(self.put("/devops/old/app/kek", "s3cr3t-v2", "--overwrite", "--new-key-version").returncode, 0)
+        self.store.params["/devops/old/app/kek"]["versions"][0]["Labels"] = ["previous"]
+        self.store.params["/devops/old/app/kek"]["versions"][1]["Labels"] = ["pinned"]
+        r = self.run_helper("copy-tree", "/devops/old/app", "/devops/new/app")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        versions = self.store.params["/devops/new/app/kek"]["versions"]
+        self.assertEqual(versions[0]["Labels"], ["previous"])
+        self.assertEqual(versions[1]["Labels"], ["pinned"])
+        self.assertNotIn("s3cr3t", r.stdout + r.stderr)
+
+    def test_copy_tree_stops_loudly_when_labelling_the_copy_fails(self):
+        self.assertEqual(self.put("/devops/old/app/a", "v1").returncode, 0)
+        self.store.params["/devops/old/app/a"]["versions"][0]["Labels"] = ["pinned"]
+        self.store.deny.add("LabelParameterVersion")
+        self.refused(self.run_helper("copy-tree", "/devops/old/app", "/devops/new/app"), "AccessDeniedException")
+
+    def test_copy_tree_refuses_before_writing_anything_when_a_later_parameter_has_a_gap(self):
+        self.assertEqual(self.put("/devops/old/app/a", "v1").returncode, 0)
+        self.assertEqual(self.put("/devops/old/app/z", "v1").returncode, 0)
+        self.assertEqual(self.put("/devops/old/app/z", "v2", "--overwrite").returncode, 0)
+        self.store.params["/devops/old/app/z"]["versions"].pop(0)  # version 1 aged out; z's history now starts at 2
+        r = self.run_helper("copy-tree", "/devops/old/app", "/devops/new/app")
+        self.refused(r, "are not 1..1")
+        self.assertNotIn("/devops/new/app/a", self.store.params)
+        self.assertNotIn("/devops/new/app/z", self.store.params)
+        # No decrypted read happened either: pass two, which would have copied "a", never started.
+        self.assertTrue(all("WithDecryption" not in b for t, b in self.store.requests if t == "GetParameterHistory"))
 
 
 if __name__ == "__main__":
