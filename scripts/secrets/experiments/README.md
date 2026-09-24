@@ -58,3 +58,9 @@ what one hands-on experiment needed, kept so the measurements recorded with it c
   reloader; an unpinned neighbour in the same Secret does) and `r17-operator-token-secret.sh` (whether
   the operator can obtain a token for any ServiceAccount through a service-account-token Secret, in a
   scratch namespace, printing the token's length only).
+  `r-tenant-store.sh` measures the tenant store shape (`components/aws-parameterstore/` and the
+  `ssm-app` reference): a pinned parameter version beside a rotating one, a JSON credential rotating
+  as one, which namespaces may use the store and which paths they may read, the delivered credential
+  rotated, revoked and restored underneath the store, two ExternalSecrets claiming one Secret, and the
+  credential Secret going missing. `ROWS=ADE` runs a subset; it toggles the stand-in's IAM access keys
+  and waits out their propagation rather than reading once.
