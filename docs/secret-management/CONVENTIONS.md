@@ -159,7 +159,9 @@ the backend would still see one caller. So one `ClusterSecretStore` reads it
   RBAC on `externalsecrets` in the listed namespaces is the boundary; an admission policy comparing
   each key with the object's namespace is the one in-cluster enforcement (**Judgement**, not
   exercised). A credential that can write also lets a `PushSecret` write through the store anywhere the
-  credential reaches, which is one more reason its reconciler stays off here.
+  credential reaches, which is one more reason its reconciler stays off here; the chart's defaults
+  turn the `PushSecret` and `ClusterPushSecret` reconcilers on (read in its values, 0.20.3 and
+  2.11.0), so a cluster that runs them as shipped has that path open.
 - **Its condition says nothing about the backend.** For a static key the operator's validation only
   resolves the credential it was given and calls nothing (read in the provider's `Validate()`, 0.20.3
   and 2.11.0). **Measured** (rows D and F): the store read `Valid` while syncs failed with
@@ -431,7 +433,10 @@ Two properties that are easy to assume and are not true:
 ## 8. Five shapes, end to end
 
 Most migrations are one of five shapes. Each is given here as the manifest it becomes, with the
-decision that shape forces.
+decision that shape forces. The manifests use the Vault store; on a delivered credential the
+decisions are the same with `ClusterSecretStore aws-parameterstore` as the store, paths under
+`/devops/<cluster>/<namespace>/`, and a pair or a certificate as one JSON parameter (§1), and
+`components/ssm-app-secrets/` shows 8.1, 8.2, 8.3 and 8.5 on it.
 
 ### 8.1 A single vendor key
 

@@ -18,9 +18,9 @@ what one hands-on experiment needed, kept so the measurements recorded with it c
   `vault-lab` carrying this machine's public Vault CA, and the `cm-leaf` Certificate in
   `secret-lab-pki`. Run `vault.sh pki` first (the mount, role and policies), then this script; the
   `secret-lab-pki` component itself needs neither. `delete` revokes the token and removes all three.
-- `parity/` — the operator-version parity gate. `parity-gate.sh up` builds a throwaway kind cluster
+- `parity/` — the operator-version parity gates. `parity-gate.sh up` builds a throwaway kind cluster
   on this lab's Docker network running ESO 0.20.3 with the lab's values (`eso-values.yaml`, which notes
-  the one key it keeps different), reaching the lab Vault
+  where it differs), reaching the lab Vault
   through a temporary NodePort and the tenant auth mounts (it refuses to run while the `tenant-auth/`
   experiment holds them), and replays `components/trellis-secrets/` there byte-for-byte except for
   the store's auth mount and role. `parity-checks.sh <label> <kubectl target args>` then runs the

@@ -298,10 +298,13 @@ Four objects, in this order. `<app>` is both the namespace and the path segment.
 
 A cluster that is handed one credential has one store, `components/aws-parameterstore/`, so there
 is no identity or role per application: onboarding is one edit, some writes and a copy.
-`components/ssm-app-secrets/` is the worked example. In this lab the AWS side comes first:
-`scripts/secrets/experiments/aws/tenant-iam.sh apply`, run by the account owner, lets the lab user
-write the realm, and `scripts/secrets/aws-credentials.sh tenant a` puts the stand-in credential
-where a platform would.
+`components/ssm-app-secrets/` is the worked example. In this lab the AWS side comes first, run by
+the account owner in this order: `scripts/secrets/experiments/aws/base-iam.sh` (the experiment user,
+its reader role and the KMS key, with the user's one access key written to a 0600 file),
+`scripts/secrets/aws-credentials.sh import` (that key into custody), then
+`scripts/secrets/experiments/aws/tenant-iam.sh apply`, which lets the lab user write the realm and
+writes the stand-in's two keys to custody. `scripts/secrets/aws-credentials.sh tenant a` then puts
+the stand-in credential where a platform would.
 
 1. **List the namespace on the store**: add it to `spec.conditions[0].namespaces` in
    `components/aws-parameterstore/cluster-secret-store.yaml`. An `ExternalSecret` in an unlisted
@@ -337,7 +340,9 @@ where a platform would.
    namespace, paths and key names changed, in a component wired the usual three places, its Flux
    `Kustomization` depending on `aws-parameterstore` and carrying the `healthCheckExprs` of
    `ssm-app-secrets`: without them Flux reads an `ExternalSecret` with no status yet, or a stale Ready
-   after a spec change, as healthy. Verify the store, then each `ExternalSecret`'s
+   after a spec change, as healthy. Copy the expression whole: it skips the generation check for
+   `CreatedOnce`, and for `Periodic` with a zero interval, which never sync again once synced and
+   would otherwise hold the group back for good after their first spec edit. Verify the store, then each `ExternalSecret`'s
    condition and events, then key names and lengths:
 
    ```bash
