@@ -14,7 +14,7 @@ spec:
   chart:
     spec:
       chart: onyx
-      version: "0.8.25"
+      version: "0.8.27"
       sourceRef:
         kind: HelmRepository
         name: onyx
@@ -33,7 +33,7 @@ spec:
       # The chart defaults to `latest`, which with IfNotPresent never updates.
       # Chart >= 0.7 needs the matching distroless model-server image, so bump
       # both together.
-      version: v4.7.3
+      version: v4.8.0
 
     # The platform owns these; the bundled copies would collide with them.
     #  - CNPG: a second operator fights cnpg-system over the cluster-scoped
