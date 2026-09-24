@@ -353,8 +353,11 @@ the stand-in credential where a platform would.
 
 An application moving to another cluster takes its subtree with it. Copy it, never regenerate it:
 a restored database only opens under the key it was written with. `copy-tree` replays each
-parameter's versions in order, so the pins in the moved manifests name the same bytes, and it refuses
-a parameter whose history no longer starts at version 1.
+parameter's versions in order, labels included, so the pins in the moved manifests name the same
+bytes. It checks every history before writing anything and copies nothing if one no longer starts
+at version 1; an AWS error part-way leaves what it wrote, to delete before retrying. The copy carries
+every superseded value too, a leaked one included: when an old version must not travel, write the
+current values under the new prefix with `put` and move the pins to the new numbers instead.
 
 ```bash
 ./scripts/secrets/ssm.sh copy-tree /devops/<old-cluster>/<app> /devops/<new-cluster>/<app>
