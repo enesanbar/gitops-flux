@@ -18,7 +18,7 @@ export AWS_PAGER=""
 
 REALM=/devops/dev-cluster   # the cluster's own subtree: /devops/<cluster>/<namespace>/...
 FOREIGN=/dev-generic        # a realm another team owns: the stand-in only reads it; the lab user writes it for that team
-BASE_PREFIX=/lab-cluster00  # base-iam.sh's prefix, which this script never touches
+BASE_PREFIX=/lab-cluster00  # base-iam.sh's prefix: its statements are never edited, only cleaned of an old widening
 LAB_USER=eso-groundwork-lab LAB_POLICY=eso-groundwork-experiment KEY_ALIAS=alias/eso-groundwork
 TENANT_USER=eso-lab-tenant TENANT_POLICY=eso-lab-tenant-read
 CONFIG="${SECRET_STATE_DIR}/aws/config.json"
@@ -68,17 +68,18 @@ current_lab_policy() {
 
 # widen | narrow. The realms get statements of their own, so the base statements are never edited
 # and hardening applied to them by hand, since base-iam.sh ran, stays as it is. Both directions first
-# strip the realm ARNs from every other statement, which undoes the in-place widening an earlier
-# version of this script did. Either direction applied twice changes nothing.
+# strip the realm ARNs from statements that also grant the base prefix, which undoes the in-place
+# widening an earlier version of this script did (it only ever touched those); a statement someone
+# added for the realms alone is left as it is. Either direction applied twice changes nothing.
 reshape_lab_policy() {
   jq -S --arg mode "$1" --arg realm "${SSM_ARN}${REALM}/*" --arg foreign "${SSM_ARN}${FOREIGN}/*" \
-    --arg key "${KEY_ARN:-}" --arg via "ssm.${REGION}.amazonaws.com" \
+    --arg base "${SSM_ARN}${BASE_PREFIX}/*" --arg key "${KEY_ARN:-}" --arg via "ssm.${REGION}.amazonaws.com" \
     --arg tenant "arn:aws:iam::${ACCOUNT}:user/${TENANT_USER}" '
     def arr: if type == "array" then . else [.] end;
     def one: if length == 1 then .[0] else . end;
     def ours: ["TenantShapeRealms", "TenantShapeKey", "ToggleTenantKeys"];
     .Statement |= (map(select((.Sid // "") as $sid | ours | any(. == $sid) | not))
-      | map(if any(.Resource | arr | .[]; . == $realm or . == $foreign)
+      | map(if any(.Resource | arr | .[]; . == $base) and any(.Resource | arr | .[]; . == $realm or . == $foreign)
             then .Resource = ((.Resource | arr) - [$realm, $foreign] | one) else . end)
       + (if $mode == "widen" then [
           {Sid: "TenantShapeRealms", Effect: "Allow", Resource: [$realm, $foreign],
@@ -90,7 +91,7 @@ reshape_lab_policy() {
            Condition: {StringEquals: {"kms:ViaService": $via}}},
           # Lab-only: the lab key also sits in the cluster (secret-lab-aws/aws-credentials), so this
           # hands an in-cluster credential an IAM write. It may activate and deactivate the keys of the
-          # stand-in for the rotation rows and never create one; no tenant credential holds anything like it.
+          # stand-in for the rotation rows and never create one.
           {Sid: "ToggleTenantKeys", Effect: "Allow", Resource: $tenant,
            Action: ["iam:ListAccessKeys", "iam:UpdateAccessKey"]}] else [] end))'
 }

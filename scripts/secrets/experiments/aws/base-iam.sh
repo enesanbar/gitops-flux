@@ -31,7 +31,10 @@ if [ "${TEARDOWN:-}" = "1" ]; then
     EXPECTED=$(jq -r '.reader_role_arn | split(":")[4]' "$CONFIG")
     [ "$REGION" = "$(jq -r .region "$CONFIG")" ] || { echo "REGION=$REGION, but custody names $(jq -r .region "$CONFIG")." >&2; exit 1; }
   else
+    # Without custody both are named explicitly: a stray REGION in the environment would tear down
+    # the global IAM half and silently skip the regional half.
     EXPECTED="${EXPECTED_ACCOUNT:?export SECRET_STATE_DIR (the lab custody) or EXPECTED_ACCOUNT to name the lab account}"
+    REGION="${LAB_REGION:?export LAB_REGION too: the region of the lab key and parameters}"
   fi
   [ "$ACCOUNT" = "$EXPECTED" ] || { echo "Profile $AWS_PROFILE is account $ACCOUNT; the lab is $EXPECTED." >&2; exit 1; }
   state=$(state_of aws iam get-user --user-name eso-lab-tenant)
@@ -63,8 +66,12 @@ if [ "${TEARDOWN:-}" = "1" ]; then
   for p in $names; do [ "$p" = None ] || { gone aws ssm delete-parameter --region "$REGION" --name "$p"; echo "   parameter $p deleted"; }; done
   # Scheduled before its alias goes: an unscheduled key without an alias is found again only by list-keys.
   if [ -n "$KEY_ID" ]; then
-    aws kms schedule-key-deletion --key-id "$KEY_ID" --pending-window-in-days 7 --region "$REGION" >/dev/null
-    echo "   key scheduled for deletion in 7 days"
+    keystate=$(aws kms describe-key --key-id "$KEY_ID" --region "$REGION" --query KeyMetadata.KeyState --output text)
+    # A run that failed after scheduling leaves the key pending; scheduling it again is refused.
+    if [ "$keystate" != PendingDeletion ]; then
+      aws kms schedule-key-deletion --key-id "$KEY_ID" --pending-window-in-days 7 --region "$REGION" >/dev/null
+    fi
+    echo "   key scheduled for deletion"
     gone aws kms delete-alias --alias-name "$KEY_ALIAS" --region "$REGION"
   fi
   echo "== residue (every line must read absent)"
@@ -72,6 +79,11 @@ if [ "${TEARDOWN:-}" = "1" ]; then
     r=$(state_of aws $check) || r=ERROR   # $check splits into its arguments on purpose
     echo "   $r  $check"
   done
+  r=$(state_of aws kms describe-key --key-id "$KEY_ALIAS" --region "$REGION") || r=ERROR
+  echo "   $r  kms alias $KEY_ALIAS"
+  n=$(aws ssm describe-parameters --region "$REGION" --parameter-filters "Key=Path,Option=Recursive,Values=${PREFIX}" \
+    --output json | jq '.Parameters | length')
+  [ "$n" = 0 ] && echo "   absent  parameters under ${PREFIX}" || echo "   $n parameters left under ${PREFIX}"
   echo "teardown done"
   exit 0
 fi
