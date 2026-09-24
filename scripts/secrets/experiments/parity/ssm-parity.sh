@@ -46,7 +46,7 @@ deliver() {
   local dir="${SECRET_STATE_DIR}/aws/tenant/$1"
   kp -n external-secrets create secret generic aws-credentials \
     --from-file=aws_access_key_id="${dir}/access_key_id" --from-file=aws_secret_access_key="${dir}/secret_access_key" \
-    --dry-run=client -o yaml | kp apply --server-side --field-manager=tenant-bootstrap -f - >/dev/null
+    --dry-run=client -o yaml | kp apply --server-side --field-manager=tenant-bootstrap --force-conflicts -f - >/dev/null
 }
 lab_aws() {
   ( unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SESSION_TOKEN
@@ -129,7 +129,8 @@ EOF
   # The credential's bytes replaced by a key AWS does not know: the next sync must fail with it,
   # which shows the store reads the Secret on every reconcile rather than a client it cached.
   kp -n external-secrets create secret generic aws-credentials --from-literal=aws_access_key_id=AKIAIOSFODNN7INVALID \
-    --from-literal=aws_secret_access_key=not-a-real-secret-key --dry-run=client -o yaml | kp apply -f - >/dev/null
+    --from-literal=aws_secret_access_key=not-a-real-secret-key --dry-run=client -o yaml |
+    kp apply --server-side --field-manager=tenant-bootstrap --force-conflicts -f - >/dev/null
   T0=$(date +%s)
   for _ in $(seq 1 12); do sync kp $NS ssm-app-worker; sleep 5; [ "$(esr kp $NS ssm-app-worker)" = SecretSyncedError ] && break; done
   why=$(cause kp $NS ssm-app-worker); echo "   unknown key @$(el): $why"
