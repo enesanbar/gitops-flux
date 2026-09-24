@@ -97,9 +97,9 @@ question for an inventory, not for a path.
   above the name are Kubernetes names, so kebab-case.
 - **Fields that change together are one parameter holding a JSON object**, read with one
   `dataFrom.extract` (§5). **Measured** on 2.11.0 (`matrix/r-tenant-store.sh` row B): one write
-  reached the Secret in one sync with both fields changed; on 0.20.3 the same extract delivered the
-  same fields (`parity/ssm-parity.sh`), and the controller reads the parameter once on both versions
-  (read in its source). As two parameters it would be two writes, and a refresh landing between them
+  reached the Secret in one sync with both fields changed, and the same on 0.20.3
+  (`parity/ssm-parity.sh`); the controller reads the parameter once on both versions (read in its
+  source). As two parameters it would be two writes, and a refresh landing between them
   delivers a new username beside an old password for a whole interval.
 - **Nothing is shared across clusters until something must be.** Then it gets a first segment of its
   own where the cluster would go (`/<realm>/shared-<scope>/<namespace>/…`), each reader names it as an
@@ -361,11 +361,11 @@ Rows whose evidence is a P-numbered check held on ESO 2.11.0 and 0.20.3 alike; r
 | Feature | Why | Evidence |
 | --- | --- | --- |
 | Explicit `data[]` mapping | The `ExternalSecret` states every key it produces, so a reviewer can see the Secret's shape without reading the backend, and a key that disappears upstream becomes an error rather than an absence. | **Measured**: a deleted entry turned the ExternalSecret `SecretSyncedError` while the Secret kept its key (P5). |
-| `dataFrom.extract` for one entry | The right tool for a credential *pair*: a username and password replaced together are one entry — a Vault entry, or one Parameter Store parameter holding JSON — and it reads that entry once, where a `remoteRef.property` per field reads it once per field. | **Measured**: every field of one entry, and only those (P1); on Parameter Store both fields of a rotation arrived in one sync (`matrix/r-tenant-store.sh` row B, 2.11.0), and 0.20.3 delivered the same fields (`parity/ssm-parity.sh`). |
+| `dataFrom.extract` for one entry | The right tool for a credential *pair*: a username and password replaced together are one entry — a Vault entry, or one Parameter Store parameter holding JSON — and it reads that entry once, where a `remoteRef.property` per field reads it once per field. | **Measured**: every field of one entry, and only those (P1); on Parameter Store both fields of a rotation arrived in one sync, on 2.11.0 (`matrix/r-tenant-store.sh` row B) and 0.20.3 (`parity/ssm-parity.sh`). |
 | `template.type` with `engineVersion: v2` | The only way to produce a typed Secret (`kubernetes.io/tls`, a dockerconfigjson) from arbitrary backend fields. | **Measured**: a typed `kubernetes.io/tls` Secret from two fields (P1). |
 | `remoteRef.version` on a key that shares a Secret | The guard for the key class when the consumer takes one Secret (§4). | **Measured**: a new version reaches nothing, the other keys keep refreshing (P2, P3); on Parameter Store the same, with the token beside the pinned key following its new version within one 5-second poll (row A), and 0.20.3 delivering the same pinned bytes (`parity/ssm-parity.sh`). Parameter Store keeps a parameter's last 100 versions and does not drop a labelled one, so label the version a pin names (read in the `PutParameter` reference, not exercised). |
 | `refreshPolicy: Periodic`, interval chosen from the consumer | The interval is a promise about how stale a value may be. Choose it from what the consumer does with the value, not from a default. | **Measured** that it follows: a new version reached the Secret within one 30-second interval (P2). **Judgement**: an hour suits most consumers, and anything shorter is a load decision made on the backend's behalf. |
-| `creationPolicy: Owner` | One manager per Secret, visible in the object itself. Pair it with the prune-disabled annotation (§3). | **Measured**: owner reference present (P1); garbage collection on deletion (`matrix/r12-key-class.sh`). |
+| `creationPolicy: Owner` | One manager per Secret, visible in the object itself. Pair it with the prune-disabled annotation (§3). | **Measured**: owner reference present (P1); garbage collection on deletion (`matrix/r12-key-class.sh`); on Parameter Store a deleted key-class `ExternalSecret` took its Secret at once, and re-applied from Git brought back the same pinned bytes, on 2.11.0 (row E) and 0.20.3 (`parity/ssm-parity.sh`). |
 | `deletionPolicy: Retain` | A backend that answers "not found" — an outage, a policy change, a typo in a path — must not remove a Secret a pod has mounted. | **Measured**: the Secret survived its entry's deletion (P5). |
 | The store that matches the identity | A namespaced `SecretStore` with TokenRequest auth per namespace identity; one `ClusterSecretStore` with `conditions.namespaces` on a delivered credential (§2). | **Judgement**, with the measured limits of each shape in §2. |
 
