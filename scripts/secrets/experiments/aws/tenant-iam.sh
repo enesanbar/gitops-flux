@@ -18,7 +18,7 @@ export AWS_PAGER=""
 
 REALM=/devops/dev-cluster   # the cluster's own subtree: /devops/<cluster>/<namespace>/...
 FOREIGN=/dev-generic        # a realm another team owns: the stand-in only reads it; the lab user writes it for that team
-BASE_PREFIX=/lab-cluster00  # base-iam.sh's prefix: every statement granting it also gains the two above
+BASE_PREFIX=/lab-cluster00  # base-iam.sh's prefix, which this script never touches
 LAB_USER=eso-groundwork-lab LAB_POLICY=eso-groundwork-experiment KEY_ALIAS=alias/eso-groundwork
 TENANT_USER=eso-lab-tenant TENANT_POLICY=eso-lab-tenant-read
 CONFIG="${SECRET_STATE_DIR}/aws/config.json"
@@ -66,24 +66,33 @@ current_lab_policy() {
     --query PolicyVersion.Document --output json
 }
 
-# widen | narrow, applied to the live document rather than to a copy of it, so a statement hardened
-# by hand since base-iam.sh ran keeps its hardening. Either direction applied twice changes nothing.
+# widen | narrow. The realms get statements of their own, so the base statements are never edited
+# and hardening applied to them by hand, since base-iam.sh ran, stays as it is. Both directions first
+# strip the realm ARNs from every other statement, which undoes the in-place widening an earlier
+# version of this script did. Either direction applied twice changes nothing.
 reshape_lab_policy() {
-  jq -S --arg mode "$1" --arg base "${SSM_ARN}${BASE_PREFIX}/*" \
-    --arg realm "${SSM_ARN}${REALM}/*" --arg foreign "${SSM_ARN}${FOREIGN}/*" \
+  jq -S --arg mode "$1" --arg realm "${SSM_ARN}${REALM}/*" --arg foreign "${SSM_ARN}${FOREIGN}/*" \
+    --arg key "${KEY_ARN:-}" --arg via "ssm.${REGION}.amazonaws.com" \
     --arg tenant "arn:aws:iam::${ACCOUNT}:user/${TENANT_USER}" '
     def arr: if type == "array" then . else [.] end;
     def one: if length == 1 then .[0] else . end;
-    .Statement |= (map(select(.Sid != "ToggleTenantKeys"))
-      | map(if any(.Resource | arr | .[]; . == $base)
-            then .Resource = (((.Resource | arr) - [$realm, $foreign])
-                              + (if $mode == "widen" then [$realm, $foreign] else [] end) | one)
-            else . end)
-      # Lab-only: the lab key also sits in the cluster (secret-lab-aws/aws-credentials), so this hands
-      # an in-cluster credential an IAM write. It may activate and deactivate the keys of the stand-in
-      # for the rotation rows and never create one; no tenant credential holds anything like it.
-      + (if $mode == "widen" then [{Sid: "ToggleTenantKeys", Effect: "Allow",
-            Action: ["iam:ListAccessKeys", "iam:UpdateAccessKey"], Resource: $tenant}] else [] end))'
+    def ours: ["TenantShapeRealms", "TenantShapeKey", "ToggleTenantKeys"];
+    .Statement |= (map(select((.Sid // "") as $sid | ours | any(. == $sid) | not))
+      | map(if any(.Resource | arr | .[]; . == $realm or . == $foreign)
+            then .Resource = ((.Resource | arr) - [$realm, $foreign] | one) else . end)
+      + (if $mode == "widen" then [
+          {Sid: "TenantShapeRealms", Effect: "Allow", Resource: [$realm, $foreign],
+           Action: ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath", "ssm:GetParameterHistory",
+                    "ssm:ListTagsForResource", "ssm:PutParameter", "ssm:DeleteParameter", "ssm:DeleteParameters",
+                    "ssm:LabelParameterVersion", "ssm:AddTagsToResource", "ssm:RemoveTagsFromResource"]},
+          {Sid: "TenantShapeKey", Effect: "Allow", Resource: $key,
+           Action: ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey"],
+           Condition: {StringEquals: {"kms:ViaService": $via}}},
+          # Lab-only: the lab key also sits in the cluster (secret-lab-aws/aws-credentials), so this
+          # hands an in-cluster credential an IAM write. It may activate and deactivate the keys of the
+          # stand-in for the rotation rows and never create one; no tenant credential holds anything like it.
+          {Sid: "ToggleTenantKeys", Effect: "Allow", Resource: $tenant,
+           Action: ["iam:ListAccessKeys", "iam:UpdateAccessKey"]}] else [] end))'
 }
 
 # Every AWS answer is assigned before it is used: inside an argument, as in `echo "$(aws ...)"` or
@@ -92,10 +101,6 @@ set_lab_policy() {
   local cur new count oldest version
   cur=$(current_lab_policy | jq -S -c .)
   new=$(printf '%s' "$cur" | reshape_lab_policy "$1" | jq -S -c .)
-  if [ "$1" = widen ] && ! printf '%s' "$new" | jq -e --arg realm "${SSM_ARN}${REALM}/*" \
-      'any(.Statement[]; any(.Resource | if type == "array" then .[] else . end; . == $realm))' >/dev/null; then
-    die "No statement of $LAB_POLICY grants ${SSM_ARN}${BASE_PREFIX}/*, so widening would add nothing but the key toggle."
-  fi
   if [ "$cur" = "$new" ]; then echo "   $LAB_POLICY unchanged"; return; fi
   count=$(aws iam list-policy-versions --policy-arn "$LAB_POLICY_ARN" --query 'length(Versions)' --output text)
   if [ "$count" -ge 5 ]; then   # a managed policy holds at most five versions
