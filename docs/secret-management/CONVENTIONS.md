@@ -105,7 +105,9 @@ question for an inventory, not for a path.
   own where the cluster would go (`/<realm>/shared-<scope>/<namespace>/…`), each reader names it as an
   exception, and nothing already written has to move.
 - **An application that changes cluster copies its subtree** (`ssm.sh copy-tree`) and never
-  regenerates it: a key follows the data it encrypts, not the cluster it runs on.
+  regenerates it: a key follows the data it encrypts, not the cluster it runs on. A pin names a
+  version *number*, so the copy replays each parameter's history in order and the pins in the moved
+  manifests name the same bytes; it refuses a parameter whose history no longer starts at version 1.
 
 `ssm.sh` writes every parameter as an Advanced SecureString under one customer-managed key: Advanced
 because a certificate chain can pass the standard tier's 4 KB, and one key the store's credential may
@@ -143,25 +145,33 @@ A platform that hands a cluster one cloud credential — a Secret it writes into
 namespace and rotates there — gives every application on the cluster the same identity at the
 backend. A store per namespace would copy that credential into every namespace and gain nothing, since
 the backend would still see one caller. So one `ClusterSecretStore` reads it
-(`components/aws-parameterstore/`), and three things hold for it:
+(`components/aws-parameterstore/`), and four things hold for it:
 
 - **The namespace list is all the store enforces.** **Measured** (`matrix/r-tenant-store.sh` row C;
   the same wording on 0.20.3 in `parity/ssm-parity.sh`): an `ExternalSecret` in an unlisted namespace
   is refused, and only its events say why — `… is not allowed from namespace "<ns>": denied by
   spec.condition`.
 - **It does not scope paths.** **Measured** (row C): an `ExternalSecret` in a listed namespace read a
-  path belonging to another namespace within seconds. Which paths each `ExternalSecret` may read is
-  therefore a rule for review and CI — its own subtree, plus a named list of exceptions such as a
-  certificate another team keeps — and not something the store enforces.
+  path belonging to another namespace within seconds. Which keys each `ExternalSecret` may read is
+  therefore a rule for review and CI — every `data[].remoteRef.key` and `dataFrom[].extract.key` in
+  its own subtree, plus a named list of exceptions such as a certificate another team keeps, and no
+  `dataFrom.find` — and CI sees only what comes through Git. For an object created through the API,
+  RBAC on `externalsecrets` in the listed namespaces is the boundary; an admission policy comparing
+  each key with the object's namespace is the one in-cluster enforcement (**Judgement**, not
+  exercised). A credential that can write also lets a `PushSecret` write through the store anywhere the
+  credential reaches, which is one more reason its reconciler stays off here.
 - **Its condition says nothing about the backend.** For a static key the operator's validation only
   resolves the credential it was given and calls nothing (read in the provider's `Validate()`, 0.20.3
-  and 2.11.0). **Measured** (rows D and F): the store stayed `Valid` through a revoked key while every
-  sync failed with `UnrecognizedClientException`, and went `InvalidProviderConfig` only when the
-  credential Secret itself was missing — after which `ExternalSecret`s failed with
-  `ClusterSecretStore "<name>" is not ready`. **Measured** too (row D): the store reads the credential
-  Secret on every reconcile, so a platform's rotation needs nothing from the cluster; with the old key
-  revoked, eight forced syncs over two minutes all went through on the new one, and on 0.20.3 a
-  credential replaced by an unknown key failed the very next sync (`parity/ssm-parity.sh`).
+  and 2.11.0). **Measured** (rows D and F): the store read `Valid` while syncs failed with
+  `UnrecognizedClientException`, both with a key AWS does not know and with the key in use revoked.
+  With the credential Secret removed it kept reading `Valid` until its next validation, while syncs
+  failed on `could not fetch SecretAccessKey secret`; after a validation (forced here, every five
+  minutes by default) it read `InvalidProviderConfig`, and `ExternalSecret`s failed with
+  `ClusterSecretStore "<name>" is not ready`.
+- **It reads the credential Secret on every sync**, so a platform's rotation needs nothing from the
+  cluster. **Measured** (row D, and on 0.20.3 `parity/ssm-parity.sh`): with a key AWS does not know
+  swapped in, the next sync failed; with the real key back, the next one succeeded — each within one
+  five-second poll.
 
 This repository turns the `ClusterSecretStore` reconciler on for that reason. `ClusterExternalSecret`
 stays off (§5).
@@ -353,7 +363,7 @@ Rows whose evidence is a P-numbered check held on ESO 2.11.0 and 0.20.3 alike; r
 | Explicit `data[]` mapping | The `ExternalSecret` states every key it produces, so a reviewer can see the Secret's shape without reading the backend, and a key that disappears upstream becomes an error rather than an absence. | **Measured**: a deleted entry turned the ExternalSecret `SecretSyncedError` while the Secret kept its key (P5). |
 | `dataFrom.extract` for one entry | The right tool for a credential *pair*: a username and password replaced together are one entry — a Vault entry, or one Parameter Store parameter holding JSON — and it reads that entry once, where a `remoteRef.property` per field reads it once per field. | **Measured**: every field of one entry, and only those (P1); on Parameter Store both fields of a rotation arrived in one sync (`matrix/r-tenant-store.sh` row B, 2.11.0), and 0.20.3 delivered the same fields (`parity/ssm-parity.sh`). |
 | `template.type` with `engineVersion: v2` | The only way to produce a typed Secret (`kubernetes.io/tls`, a dockerconfigjson) from arbitrary backend fields. | **Measured**: a typed `kubernetes.io/tls` Secret from two fields (P1). |
-| `remoteRef.version` on a key that shares a Secret | The guard for the key class when the consumer takes one Secret (§4). | **Measured**: a new version reaches nothing, the other keys keep refreshing (P2, P3); on Parameter Store the same, with the token beside the pinned key following its new version in 5 seconds (row A), and 0.20.3 delivering the same pinned bytes (`parity/ssm-parity.sh`). |
+| `remoteRef.version` on a key that shares a Secret | The guard for the key class when the consumer takes one Secret (§4). | **Measured**: a new version reaches nothing, the other keys keep refreshing (P2, P3); on Parameter Store the same, with the token beside the pinned key following its new version within one 5-second poll (row A), and 0.20.3 delivering the same pinned bytes (`parity/ssm-parity.sh`). Parameter Store keeps a parameter's last 100 versions and does not drop a labelled one, so label the version a pin names (read in the `PutParameter` reference, not exercised). |
 | `refreshPolicy: Periodic`, interval chosen from the consumer | The interval is a promise about how stale a value may be. Choose it from what the consumer does with the value, not from a default. | **Measured** that it follows: a new version reached the Secret within one 30-second interval (P2). **Judgement**: an hour suits most consumers, and anything shorter is a load decision made on the backend's behalf. |
 | `creationPolicy: Owner` | One manager per Secret, visible in the object itself. Pair it with the prune-disabled annotation (§3). | **Measured**: owner reference present (P1); garbage collection on deletion (`matrix/r12-key-class.sh`). |
 | `deletionPolicy: Retain` | A backend that answers "not found" — an outage, a policy change, a typo in a path — must not remove a Secret a pod has mounted. | **Measured**: the Secret survived its entry's deletion (P5). |
@@ -528,3 +538,9 @@ into the cluster; it will never notice that one is about to expire, and it will 
 one. Something else must renew — an ACME client, a certificate authority's own automation, a PKI
 issuer — and if a certificate is copied into several Secret names, each copy needs its own
 `ExternalSecret` or the renewal reaches some consumers and not others.
+
+The two fields above are read one call each; `dataFrom.extract` reads the entry once. That matters
+most for a certificate kept as two separate parameters, as another team may keep one: its renewal is
+two writes, and a refresh landing between them pairs a new certificate with an old key for up to one
+interval, which an ingress controller rejects. Ask whoever keeps it for one entry, or for a renewal
+that writes both before anything reads (**Judgement**).

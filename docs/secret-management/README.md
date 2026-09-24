@@ -335,7 +335,9 @@ where a platform would.
 
 3. **The Namespace and the ExternalSecrets**, copied from `components/ssm-app-secrets/` with the
    namespace, paths and key names changed, in a component wired the usual three places, its Flux
-   `Kustomization` depending on `aws-parameterstore`. Verify the store, then each `ExternalSecret`'s
+   `Kustomization` depending on `aws-parameterstore` and carrying the `healthCheckExprs` of
+   `ssm-app-secrets`: without them Flux reads an `ExternalSecret` with no status yet, or a stale Ready
+   after a spec change, as healthy. Verify the store, then each `ExternalSecret`'s
    condition and events, then key names and lengths:
 
    ```bash
@@ -345,7 +347,9 @@ where a platform would.
    ```
 
 An application moving to another cluster takes its subtree with it. Copy it, never regenerate it:
-a restored database only opens under the key it was written with.
+a restored database only opens under the key it was written with. `copy-tree` replays each
+parameter's versions in order, so the pins in the moved manifests name the same bytes, and it refuses
+a parameter whose history no longer starts at version 1.
 
 ```bash
 ./scripts/secrets/ssm.sh copy-tree /devops/<old-cluster>/<app> /devops/<new-cluster>/<app>
@@ -430,17 +434,20 @@ a store that logs in, as the Vault stores do, an `InvalidProviderConfig` one is 
 | `SecretSyncedError` (store `Valid` or not) | A sync failed. **This is the common shape of every outage**, because the store often has not noticed yet. The event says which: `Secret does not exist` for a missing entry or a mistyped path (the two read the same, for Vault and Parameter Store alike, and never as Parameter Store's own `ParameterNotFound`); `permission denied` when a Vault policy does not cover the path; an access denial with a request id; an expired token; a refused or timed-out connection when the backend is down; a sealed-Vault error from the login. | Follow the event. For a backend error, check the backend's health before anything in the cluster. For a path, compare `remoteRef.key` with a listing of its parent. Never delete the ExternalSecret to "reset" it: that garbage-collects the Secret. |
 | store `InvalidProviderConfig` (a store that logs in, such as Vault's) | The store's last login failed: the backend is sealed or unreachable, or the store's CA, server, auth mount or role is wrong. | The backend's health **first**, the store definition second. |
 | `SecretDeleted`, and the Secret is gone | `deletionPolicy: Delete` met a backend that answered "not found". | Restore the entry, then change the policy to `Retain`. |
+| An `ExternalSecret` stuck in `Terminating` | It carries the operator's cleanup finalizer and the operator is not running, so the deletion waits; a Flux prune of it, or of its namespace, waits the same way. | Bring the operator back and it finishes the deletion, its Secret going with it. Do not strip the finalizer. |
 
 On a store that reads a delivered credential the condition means even less: for a static key the
-store's validation only checks that the credential Secret holds both fields, and makes no call to
-AWS. Four shapes of their own:
+store's validation only resolves the credential it was given and makes no call to AWS, and it notices
+a missing credential Secret only when it next validates (every five minutes, by the operator's
+defaults). Five shapes of their own:
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
-| `SecretSyncedError`, events `UnrecognizedClientException: The security token included in the request is invalid`, store `Valid` | The delivered key is dead: rotated away, revoked or deleted. A revocation took about three minutes to bite here, which is how long IAM took to propagate it. | Ask the platform what happened to the credential, and check when the delivered Secret last changed. Nothing in this repository fixes it. |
-| store `InvalidProviderConfig`, events `ClusterSecretStore "<name>" is not ready` | The credential Secret the store reads is missing or lacks a field. | The platform's delivery first. Secrets already delivered keep their last values meanwhile. |
+| `SecretSyncedError`, events `UnrecognizedClientException: The security token included in the request is invalid`, store `Valid` | The delivered key is dead: rotated away, revoked or deleted. A revocation took 36 and 194 seconds to bite in two runs here, while IAM propagated it; neither is a bound. | Ask the platform what happened to the credential, and check when the delivered Secret last changed. Nothing in this repository fixes it. |
+| `SecretSyncedError`, events `could not fetch SecretAccessKey secret: cannot get Kubernetes secret "aws-credentials" …`, store `Valid` | The credential Secret is missing, and the store has not validated since. | The platform's delivery first; once it is back, validate and sync as in the next row. |
+| store `InvalidProviderConfig`, events `ClusterSecretStore "<name>" is not ready` | The store's validation found the credential Secret missing or incomplete. Every `ExternalSecret` on the store then fails until it validates again, and failed ones retry on a backoff of up to seven minutes. | Restore the delivery, then validate the store and force-sync rather than wait: `kubectl --context kind-local-dind-cluster annotate clustersecretstore aws-parameterstore force-validate="$(date +%s)" --overwrite`, then the force-sync under "Rotating a value". Delivered Secrets keep their last values meanwhile. |
 | events `… is not allowed from namespace "<ns>": denied by spec.condition` | The namespace is not on the store's list. | Onboarding step 1 above. |
-| `SecretOwnedByOther` (on operator 0.20.3: `SecretSyncedError`, message `secret is owned by another ExternalSecret`) | A second `ExternalSecret` targets a Secret another one owns — usually a rename under `prune: disabled`, which leaves the old one serving it. | Delete the old `ExternalSecret` on purpose, then force-sync the new one. The Secret is absent in between, because the deletion garbage-collects it. |
+| `SecretOwnedByOther`, message `target is owned by another ExternalSecret: …` (on operator 0.20.3: reason `SecretSyncedError`, message `target is owned by another ExternalSecret`, the owner named only in the event) | A second `ExternalSecret` targets a Secret another one owns — usually a rename under `prune: disabled`, which leaves the old one serving it. | Delete the old `ExternalSecret` on purpose, then force-sync the new one. The Secret is absent in between, because the deletion garbage-collects it. For a key-class Secret, first pin the new `ExternalSecret` to the version the old Secret holds: a `CreatedOnce` one would otherwise take the backend's latest. |
 
 ### Restarting on change: what a reloader costs
 
