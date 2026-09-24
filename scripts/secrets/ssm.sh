@@ -203,7 +203,7 @@ copy_tree() {
     refuse_version_gap "$name" "$versions" "Nothing more was copied."
     count=$(printf '%s' "$history" | jq length)
     class=$(tag_value "$name" class)
-    for i in $(seq 0 $((count - 1))); do
+    for ((i = 0; i < count; i++)); do
       flags=(--exact --description "$(printf '%s' "$history" | jq -r --argjson i "$i" --arg n "$name" '.[$i].Description // ("Copied from " + $n)')")
       if [ "$i" = 0 ]; then [ "$class" = key ] && flags+=(--key-class)
       else flags+=(--overwrite); [ "$class" = key ] && flags+=(--new-key-version); fi
