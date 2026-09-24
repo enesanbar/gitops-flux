@@ -7,35 +7,56 @@
 #   export SECRET_STATE_DIR=<the main tree's .local/secret-management/dev-cluster>
 #   AWS_PROFILE=<IAM-admin profile of the lab account> tenant-iam.sh plan | apply | teardown
 #
-# Nothing secret is printed. `plan` changes nothing; `apply` and `teardown` ask before acting.
+# Nothing secret is printed. `plan` changes nothing; `apply` and `teardown` ask before acting. The
+# account must be the one custody's config.json names; once that file is gone, EXPECTED_ACCOUNT (and
+# LAB_REGION if not us-west-1) name it instead.
 set +x; set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/common.sh"
 : "${AWS_PROFILE:?export AWS_PROFILE=<IAM-admin profile of the lab account>}"
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN   # exported keys would win over the profile
 export AWS_PAGER=""
 
-REGION="${REGION:-us-west-1}"
 REALM=/devops/dev-cluster   # the cluster's own subtree: /devops/<cluster>/<namespace>/...
-FOREIGN=/dev-generic        # a realm another team owns; the cluster reads it and never writes it
+FOREIGN=/dev-generic        # a realm another team owns: the stand-in only reads it; the lab user writes it for that team
 BASE_PREFIX=/lab-cluster00  # base-iam.sh's prefix: every statement granting it also gains the two above
 LAB_USER=eso-groundwork-lab LAB_POLICY=eso-groundwork-experiment KEY_ALIAS=alias/eso-groundwork
 TENANT_USER=eso-lab-tenant TENANT_POLICY=eso-lab-tenant-read
+CONFIG="${SECRET_STATE_DIR}/aws/config.json"
 TENANT_CUSTODY="${SECRET_STATE_DIR}/aws/tenant"
+PENDING_KEY=""
 
 die() { echo "$*" >&2; exit 1; }
 confirm() { local ok; read -r -p "$1 [y/N] " ok; [ "$ok" = y ] || die "Nothing changed."; }
-exists_user() { aws iam get-user --user-name "$1" >/dev/null 2>&1; }
 
-preflight() {
-  [ -s "${SECRET_STATE_DIR}/aws/config.json" ] ||
-    die "No lab AWS custody under SECRET_STATE_DIR; point it at the main tree's .local/secret-management/dev-cluster."
-  ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-  # base-iam.sh's resources double as the account's fingerprint, so an admin profile for any other
-  # account stops here before anything is created in it.
-  exists_user "$LAB_USER" || die "No user $LAB_USER in account $ACCOUNT: wrong profile, or base-iam.sh never ran."
-  KEY_ARN=$(aws kms describe-key --key-id "$KEY_ALIAS" --region "$REGION" --query KeyMetadata.Arn --output text 2>/dev/null) ||
-    die "No $KEY_ALIAS in $REGION of account $ACCOUNT."
+# present | absent. Only a not-found error means absent; any other failure stops the script, because
+# teardown deletes the custody copies of the keys once the user reads as absent.
+state_of() {
+  local out
+  if out=$("$@" 2>&1 >/dev/null); then echo present; return; fi
+  case "$out" in *NoSuchEntity*|*NotFoundException*) echo absent ;; *) echo "${out:-$* failed}" >&2; return 1 ;; esac
+}
+
+identity() {
+  local expected
+  if [ -s "$CONFIG" ]; then
+    expected=$(jq -r '.reader_role_arn | split(":")[4]' "$CONFIG")
+    REGION=$(jq -r .region "$CONFIG")
+  else
+    : "${EXPECTED_ACCOUNT:?custody has no config.json; export EXPECTED_ACCOUNT to name the lab account}"
+    expected=$EXPECTED_ACCOUNT REGION=${LAB_REGION:-us-west-1}
+  fi
+  CALLER=$(aws sts get-caller-identity --query Arn --output text)
+  ACCOUNT=$(printf '%s' "$CALLER" | cut -d: -f5)
+  [ "$ACCOUNT" = "$expected" ] || die "Profile $AWS_PROFILE is account $ACCOUNT; the lab's custody names $expected."
   LAB_POLICY_ARN="arn:aws:iam::${ACCOUNT}:policy/${LAB_POLICY}"
   SSM_ARN="arn:aws:ssm:${REGION}:${ACCOUNT}:parameter"
+}
+
+needs_base() {
+  local state
+  state=$(state_of aws iam get-user --user-name "$LAB_USER")
+  [ "$state" = present ] || die "No user $LAB_USER in account $ACCOUNT: base-iam.sh never ran here."
+  KEY_ARN=$(aws kms describe-key --key-id "$KEY_ALIAS" --region "$REGION" --query KeyMetadata.Arn --output text)
 }
 
 current_lab_policy() {
@@ -65,19 +86,26 @@ reshape_lab_policy() {
             Action: ["iam:ListAccessKeys", "iam:UpdateAccessKey"], Resource: $tenant}] else [] end))'
 }
 
+# Every AWS answer is assigned before it is used: inside an argument, as in `echo "$(aws ...)"` or
+# `[ "$(aws ...)" -ge 5 ]`, a failed call is not fatal and reads as an empty answer.
 set_lab_policy() {
-  local cur new oldest
+  local cur new count oldest version
   cur=$(current_lab_policy | jq -S -c .)
   new=$(printf '%s' "$cur" | reshape_lab_policy "$1" | jq -S -c .)
+  if [ "$1" = widen ] && ! printf '%s' "$new" | jq -e --arg realm "${SSM_ARN}${REALM}/*" \
+      'any(.Statement[]; any(.Resource | if type == "array" then .[] else . end; . == $realm))' >/dev/null; then
+    die "No statement of $LAB_POLICY grants ${SSM_ARN}${BASE_PREFIX}/*, so widening would add nothing but the key toggle."
+  fi
   if [ "$cur" = "$new" ]; then echo "   $LAB_POLICY unchanged"; return; fi
-  # A managed policy holds at most five versions.
-  if [ "$(aws iam list-policy-versions --policy-arn "$LAB_POLICY_ARN" --query 'length(Versions)' --output text)" -ge 5 ]; then
+  count=$(aws iam list-policy-versions --policy-arn "$LAB_POLICY_ARN" --query 'length(Versions)' --output text)
+  if [ "$count" -ge 5 ]; then   # a managed policy holds at most five versions
     oldest=$(aws iam list-policy-versions --policy-arn "$LAB_POLICY_ARN" \
       --query 'sort_by(Versions[?!IsDefaultVersion], &CreateDate)[0].VersionId' --output text)
     aws iam delete-policy-version --policy-arn "$LAB_POLICY_ARN" --version-id "$oldest"
   fi
-  echo "   $LAB_POLICY now at $(aws iam create-policy-version --policy-arn "$LAB_POLICY_ARN" \
-    --policy-document "$new" --set-as-default --query PolicyVersion.VersionId --output text)"
+  version=$(aws iam create-policy-version --policy-arn "$LAB_POLICY_ARN" \
+    --policy-document "$new" --set-as-default --query PolicyVersion.VersionId --output text)
+  echo "   $LAB_POLICY now at $version"
 }
 
 # ssm:GetParameter (every call the operator makes for data[], remoteRef.property, dataFrom.extract
@@ -91,65 +119,120 @@ tenant_policy() {
        Condition: {StringEquals: {"kms:ViaService": $via}}}]}'
 }
 
-key_count() { aws iam list-access-keys --user-name "$TENANT_USER" --query 'length(AccessKeyMetadata)' --output text; }
-slot_held() { [ -s "${TENANT_CUSTODY}/$1/access_key_id" ] && [ -s "${TENANT_CUSTODY}/$1/secret_access_key" ]; }
+# Only a user this script made is adopted: a broader leftover would void the narrow stand-in.
+refuse_foreign_user() {
+  local tag attached groups inline
+  tag=$(aws iam list-user-tags --user-name "$TENANT_USER" --query "Tags[?Key=='stands-in-for'].Value | [0]" --output text)
+  attached=$(aws iam list-attached-user-policies --user-name "$TENANT_USER" --query 'length(AttachedPolicies)' --output text)
+  groups=$(aws iam list-groups-for-user --user-name "$TENANT_USER" --query 'length(Groups)' --output text)
+  inline=$(aws iam list-user-policies --user-name "$TENANT_USER" --query "length(PolicyNames[?@ != '$TENANT_POLICY'])" --output text)
+  [ "$tag" = tenant-credential ] && [ "$attached" = 0 ] && [ "$groups" = 0 ] && [ "$inline" = 0 ] ||
+    die "$TENANT_USER exists but is not the narrow stand-in this script makes; not adopting it."
+}
 
-# The secret half exists only in this one response, so it goes straight to custody.
+key_ids() { aws iam list-access-keys --user-name "$TENANT_USER" --query 'AccessKeyMetadata[].AccessKeyId' --output text; }
+slot_id() { cat "${TENANT_CUSTODY}/$1/access_key_id" 2>/dev/null || true; }   # the key id, never the secret
+
+# AWS never returns a secret twice, so a key minted by a run that then fails is useless: the exit
+# trap deletes it instead of leaving it for the next apply to trip over.
+drop_pending_key() {
+  [ -n "$PENDING_KEY" ] || return 0
+  aws iam delete-access-key --user-name "$TENANT_USER" --access-key-id "$PENDING_KEY" &&
+    echo "   the key this failed run minted was deleted again" >&2
+}
+trap drop_pending_key EXIT
+trap 'exit 130' INT TERM
+
 create_key_into() {
   local json
   json=$(aws iam create-access-key --user-name "$TENANT_USER" --output json)
+  PENDING_KEY=$(printf '%s' "$json" | jq -r .AccessKey.AccessKeyId)
   printf '%s' "$json" | jq -j .AccessKey.AccessKeyId | private_write "${TENANT_CUSTODY}/$1/access_key_id"
   printf '%s' "$json" | jq -j .AccessKey.SecretAccessKey | private_write "${TENANT_CUSTODY}/$1/secret_access_key"
+  PENDING_KEY=""
 }
 
 ensure_keys() {
-  local count
-  count=$(key_count)
-  if [ "$count" = 2 ] && slot_held a && slot_held b; then echo "   both keys already in custody"; return; fi
-  [ "$count" = 0 ] || die "$TENANT_USER has $count key(s) whose secrets custody does not hold and AWS cannot return:
-delete them (aws iam list-access-keys / delete-access-key --user-name $TENANT_USER), then apply again.
-Not teardown: it also deletes every parameter under both realms."
-  create_key_into a
-  create_key_into b
-  echo "   two access keys written to custody as tenant/a and tenant/b"
+  local ids slot id held=" " missing=() orphans=()
+  ids=$(key_ids)
+  [ "$ids" = None ] && ids=""
+  for slot in a b; do
+    id=$(slot_id "$slot")
+    if [ -n "$id" ] && [ -s "${TENANT_CUSTODY}/$slot/secret_access_key" ] && [[ " ${ids//$'\t'/ } " == *" $id "* ]]
+    then held+="$id "; else missing+=("$slot"); fi
+  done
+  for id in $ids; do [[ $held == *" $id "* ]] || orphans+=("$id"); done
+  [ "${#orphans[@]}" = 0 ] || die "$TENANT_USER has key(s) ${orphans[*]} whose secret custody does not hold,
+and AWS cannot return it: aws iam delete-access-key --user-name $TENANT_USER --access-key-id <id>, then apply
+again. Not teardown: it also deletes every parameter under both realms."
+  if [ "${#missing[@]}" = 0 ]; then echo "   both keys already in custody"; return; fi
+  for slot in "${missing[@]}"; do create_key_into "$slot"; echo "   key $slot written to custody"; done
 }
 
 plan() {
-  echo "account=$ACCOUNT region=$REGION profile=$AWS_PROFILE"
+  local cur widened state ids count
+  cur=$(current_lab_policy | jq -S .)
+  widened=$(printf '%s' "$cur" | reshape_lab_policy widen | jq -S .)
+  echo "caller=$CALLER region=$REGION"
   echo "== $LAB_POLICY, current default -> widened"
-  diff <(current_lab_policy | jq -S .) <(current_lab_policy | reshape_lab_policy widen | jq -S .) || true
-  if exists_user "$TENANT_USER"; then echo "== $TENANT_USER exists with $(key_count) key(s)"
+  diff <(printf '%s\n' "$cur") <(printf '%s\n' "$widened") || true
+  state=$(state_of aws iam get-user --user-name "$TENANT_USER")
+  if [ "$state" = present ]; then
+    ids=$(key_ids); [ "$ids" = None ] && ids=""
+    count=$(wc -w <<<"$ids" | tr -d ' ')
+    echo "== $TENANT_USER exists with $count key(s)"
   else echo "== $TENANT_USER to be created"; fi
   echo "== $TENANT_POLICY (inline on $TENANT_USER)"; tenant_policy | jq .
   echo "Untouched: the reader role, the KMS key and its policy, ${BASE_PREFIX}/*, the lab user's own key."
 }
 
 apply() {
+  local state history
+  [ -s "$CONFIG" ] || die "No lab AWS custody at $CONFIG; point SECRET_STATE_DIR at the main tree's .local/secret-management/dev-cluster."
+  # With it on, the CLI records every response, a new key's secret included, in ~/.aws/cli/history.
+  history=$(aws configure get cli_history 2>/dev/null || true)
+  [ "$history" != enabled ] || die "cli_history is enabled for $AWS_PROFILE; turn it off before apply mints keys."
   plan
   confirm "Apply to account $ACCOUNT?"
   echo "== 1. $LAB_POLICY"; set_lab_policy widen
   echo "== 2. $TENANT_USER and $TENANT_POLICY"
-  exists_user "$TENANT_USER" || aws iam create-user --user-name "$TENANT_USER" \
-    --tags Key=purpose,Value=eso-groundwork Key=stands-in-for,Value=tenant-credential >/dev/null
-  aws iam wait user-exists --user-name "$TENANT_USER"
+  state=$(state_of aws iam get-user --user-name "$TENANT_USER")
+  if [ "$state" = absent ]; then
+    aws iam create-user --user-name "$TENANT_USER" \
+      --tags Key=purpose,Value=eso-groundwork Key=stands-in-for,Value=tenant-credential >/dev/null
+    aws iam wait user-exists --user-name "$TENANT_USER"
+  else
+    refuse_foreign_user
+  fi
   aws iam put-user-policy --user-name "$TENANT_USER" --policy-name "$TENANT_POLICY" --policy-document "$(tenant_policy)"
   echo "== 3. access keys"; ensure_keys
   echo "Done. Parameters are written with the lab user's key; the stand-in only reads."
 }
 
+# Needs no base resources, so it still works after base-iam.sh is gone. The user goes first and must
+# read as absent before custody is touched; the policy is narrowed before the sweep, so the lab key
+# cannot write a parameter the listing has already passed.
 teardown() {
-  local names name key
-  echo "account=$ACCOUNT: removes $TENANT_USER and its keys, every parameter under ${REALM}/ and ${FOREIGN}/,"
-  echo "the tenant keys in custody, and the widening of $LAB_POLICY."
+  local state ids key names name prefix
+  echo "caller=$CALLER: deletes $TENANT_USER and its keys, narrows $LAB_POLICY, then deletes every"
+  echo "parameter under ${REALM}/ and ${FOREIGN}/ and the tenant keys in custody."
   confirm "Tear down in account $ACCOUNT?"
-  if exists_user "$TENANT_USER"; then
-    for key in $(aws iam list-access-keys --user-name "$TENANT_USER" --query 'AccessKeyMetadata[].AccessKeyId' --output text); do
-      aws iam delete-access-key --user-name "$TENANT_USER" --access-key-id "$key"
+  state=$(state_of aws iam get-user --user-name "$TENANT_USER")
+  if [ "$state" = present ]; then
+    ids=$(key_ids)
+    for key in $ids; do
+      [ "$key" = None ] || aws iam delete-access-key --user-name "$TENANT_USER" --access-key-id "$key"
     done
-    aws iam delete-user-policy --user-name "$TENANT_USER" --policy-name "$TENANT_POLICY" 2>/dev/null || true
+    state=$(state_of aws iam get-user-policy --user-name "$TENANT_USER" --policy-name "$TENANT_POLICY")
+    [ "$state" = absent ] || aws iam delete-user-policy --user-name "$TENANT_USER" --policy-name "$TENANT_POLICY"
     aws iam delete-user --user-name "$TENANT_USER"
-    echo "   $TENANT_USER deleted"
   fi
+  state=$(state_of aws iam get-user --user-name "$TENANT_USER")
+  [ "$state" = absent ] || die "$TENANT_USER still exists; custody keeps its keys."
+  echo "   $TENANT_USER gone"
+  state=$(state_of aws iam get-policy --policy-arn "$LAB_POLICY_ARN")
+  if [ "$state" = present ]; then echo "== $LAB_POLICY"; set_lab_policy narrow
+  else echo "   $LAB_POLICY already gone"; fi
   for prefix in "$REALM" "$FOREIGN"; do
     names=$(aws ssm describe-parameters --region "$REGION" \
       --parameter-filters "Key=Path,Option=Recursive,Values=${prefix}" --query 'Parameters[].Name' --output text)
@@ -159,15 +242,14 @@ teardown() {
       echo "   $name deleted"
     done
   done
-  echo "== $LAB_POLICY"; set_lab_policy narrow
   rm -rf -- "${SECRET_STATE_DIR:?}/aws/tenant"
   echo "   tenant keys removed from custody"
-  echo "The cluster side is separate: delete external-secrets/aws-credentials in the lab."
+  echo "The cluster side is separate: aws-credentials.sh tenant-remove."
 }
 
 case "${1:-}" in
-  plan) preflight; plan ;;
-  apply) preflight; apply ;;
-  teardown) preflight; teardown ;;
+  plan) identity; needs_base; plan ;;
+  apply) identity; needs_base; apply ;;
+  teardown) identity; teardown ;;
   *) echo "Usage: tenant-iam.sh plan | apply | teardown" >&2; exit 2 ;;
 esac
