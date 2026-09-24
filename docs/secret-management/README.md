@@ -301,7 +301,7 @@ is no identity or role per application: onboarding is one edit, some writes and 
 `components/ssm-app-secrets/` is the worked example. In this lab the AWS side comes first, run by
 the account owner in this order: `scripts/secrets/experiments/aws/base-iam.sh` (the experiment user,
 its reader role and the KMS key, with the user's one access key written to a 0600 file),
-`scripts/secrets/aws-credentials.sh import` (that key into custody), then
+`scripts/secrets/aws-credentials.sh import <region> <reader-role-arn>` (that key into custody), then
 `scripts/secrets/experiments/aws/tenant-iam.sh apply`, which lets the lab user write the realm and
 writes the stand-in's two keys to custody. `scripts/secrets/aws-credentials.sh tenant a` then puts
 the stand-in credential where a platform would.
@@ -356,8 +356,9 @@ a restored database only opens under the key it was written with. `copy-tree` re
 parameter's versions in order, labels included, so the pins in the moved manifests name the same
 bytes. It checks every history before writing anything and copies nothing if one no longer starts
 at version 1; an AWS error part-way leaves what it wrote, to delete before retrying. The copy carries
-every superseded value too, a leaked one included: when an old version must not travel, write the
-current values under the new prefix with `put` and move the pins to the new numbers instead.
+every superseded value too, a leaked one included: when an old version must not travel, write under
+the new prefix with `put` the version each pin names for a pinned key and the latest for the rest,
+then move the pins to the new numbers.
 
 ```bash
 ./scripts/secrets/ssm.sh copy-tree /devops/<old-cluster>/<app> /devops/<new-cluster>/<app>
@@ -451,7 +452,7 @@ defaults). Five shapes of their own:
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
-| `SecretSyncedError`, events `UnrecognizedClientException: The security token included in the request is invalid`, store `Valid` | The delivered key is dead: rotated away, revoked or deleted. A revocation took 36 and 194 seconds to bite in two runs here, while IAM propagated it; neither is a bound. | Ask the platform what happened to the credential, and check when the delivered Secret last changed. Nothing in this repository fixes it. |
+| `SecretSyncedError`, events `UnrecognizedClientException: The security token included in the request is invalid`, store `Valid` | The delivered key is dead: rotated away, revoked or deleted. A revocation took 36, 194 and 37 seconds to bite in three runs here, while IAM propagated it; none is a bound. | Ask the platform what happened to the credential, and check when the delivered Secret last changed. Nothing in this repository fixes it. |
 | `SecretSyncedError`, events `could not fetch SecretAccessKey secret: cannot get Kubernetes secret "aws-credentials" …`, store `Valid` | The credential Secret is missing, and the store has not validated since. | The platform's delivery first; once it is back, validate and sync as in the next row. |
 | store `InvalidProviderConfig`, events `ClusterSecretStore "<name>" is not ready` | The store's validation found the credential Secret missing or incomplete. Every `ExternalSecret` on the store then fails until it validates again, and failed ones retry on a backoff of up to seven minutes. | Restore the delivery, then validate the store and force-sync rather than wait: `kubectl --context kind-local-dind-cluster annotate clustersecretstore aws-parameterstore force-validate="$(date +%s)" --overwrite`, then the force-sync under "Rotating a value". Delivered Secrets keep their last values meanwhile. |
 | events `… is not allowed from namespace "<ns>": denied by spec.condition` | The namespace is not on the store's list. | Onboarding step 1 above. |

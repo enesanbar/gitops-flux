@@ -437,8 +437,10 @@ Two properties that are easy to assume and are not true:
 Most migrations are one of five shapes. Each is given here as the manifest it becomes, with the
 decision that shape forces. The manifests use the Vault store; on a delivered credential the
 decisions are the same with `ClusterSecretStore aws-parameterstore` as the store, paths under
-`/devops/<cluster>/<namespace>/`, and a pair or a certificate as one JSON parameter (§1), and
-`components/ssm-app-secrets/` shows 8.1, 8.2, 8.3 and 8.5 on it.
+`/devops/<cluster>/<namespace>/`, and a pair or a certificate of your own as one JSON parameter
+(§1), which must fit the Advanced tier's 8 KB (a long chain with a large key may not; read in the
+`PutParameter` reference). `components/ssm-app-secrets/` shows 8.1, 8.2 and 8.3 that way, and 8.5
+as a certificate kept in another team's realm, as two parameters (§8.5 says what that costs).
 
 ### 8.1 A single vendor key
 
