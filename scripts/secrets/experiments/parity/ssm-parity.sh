@@ -98,6 +98,18 @@ checks() {
   echo "   the pinned key: both clusters deliver version 1; the parameter is at version ${latest}"
   check "the pin is tested against a parameter that has moved past it" '[ "$latest" -gt 1 ]'
 
+  # A JSON credential rotated in one write must reach the throwaway in one sync, both fields at once.
+  # A failed read yields an empty digest (|| true), so it lands as a FAIL rather than ending the run.
+  local u0 p0 u1 p1
+  u0=$(digests kp $NS ssm-app-database | grep -o 'username:[0-9a-f]*' || true); p0=$(digests kp $NS ssm-app-database | grep -o 'password:[0-9a-f]*' || true)
+  { openssl rand -hex 4; openssl rand -hex 16; } | jq -Rsc 'split("\n") | {username: ("ssm_app_" + .[0]), password: .[1]}' |
+    "${REPO}/scripts/secrets/ssm.sh" put /devops/dev-cluster/ssm-app/database --overwrite \
+      --description "Example database account as one JSON object; username and password are replaced together." >/dev/null
+  sync kp $NS ssm-app-database; sleep 10
+  u1=$(digests kp $NS ssm-app-database | grep -o 'username:[0-9a-f]*' || true); p1=$(digests kp $NS ssm-app-database | grep -o 'password:[0-9a-f]*' || true)
+  check "a JSON credential rotated in one write arrives as one on this version" '[ -n "$u1" ] && [ "$u0" != "$u1" ] && [ "$p0" != "$p1" ]'
+  sync kl $NS ssm-app-database
+
   kp create namespace secret-lab-ssm-outsider --dry-run=client -o yaml | kp apply -f - >/dev/null
   cat <<EOF | kp apply -f - >/dev/null
 apiVersion: external-secrets.io/v1
