@@ -56,6 +56,11 @@ what one hands-on experiment needed, kept so the measurements recorded with it c
   `CH` (the chart directory). Rows that need drift suspend the Flux Kustomization they touch and
   resume it; `r-aws-unreachable.sh` black-holes the SSM endpoint in CoreDNS and restores the live
   object afterwards.
+  The lab's ExternalSecrets on Parameter Store refresh once a day. Each read of a SecureString
+  decrypts through the account's KMS key, whose free tier is 20,000 requests a month; at a
+  one-minute refresh the `secret-lab-aws` experiments alone read 15 parameters a minute.
+  `r-aws-rows.sh` sets 1m for its own run while it holds `secret-lab-aws` suspended, and the other
+  rows force their syncs.
   **These rows mutate a live cluster destructively**: they delete the Vault pod and the application's
   Secret, rotate real values in the backend, edit a policy file in place (an interrupted run leaves it
   narrowed) and patch cluster-wide CoreDNS. Run them against a lab and nothing else. Timing note: a

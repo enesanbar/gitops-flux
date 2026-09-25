@@ -10,6 +10,12 @@ es2() { $K -n $NS get externalsecret "$1" -o jsonpath='{.status.conditions[0].re
 k2() { $K -n $NS get secret "$1" -o go-template="{{with index .data \"$2\"}}{{len .}}{{else}}absent{{end}}" 2>/dev/null || echo no-secret; }
 sync2() { $K -n $NS annotate externalsecret "$1" force-sync="$(date +%s%N)" --overwrite >/dev/null; }
 echo "AWS rows start=$(now)"; $F suspend kustomization secret-lab-aws >/dev/null
+# Git holds these at 24h to spare the account's KMS requests; the restart row times a periodic
+# refresh, so the run uses 1m, and resuming the Kustomization puts Git's interval back.
+trap '$F resume kustomization secret-lab-aws --timeout 3m >/dev/null 2>&1' EXIT
+for e in trellis-secrets-static trellis-secrets-vault-minted llm-key-only trellis-by-path wildcard-from-ssm; do
+  $K -n $NS patch externalsecret "$e" --type merge -p '{"spec":{"refreshInterval":"1m"}}' >/dev/null
+done
 
 echo "== generated Secret deleted by hand =="
 T0=$(date -u +%s); $K -n $NS delete secret trellis-secrets-static >/dev/null

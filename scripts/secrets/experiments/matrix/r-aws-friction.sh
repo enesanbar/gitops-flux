@@ -34,10 +34,11 @@ echo "   commit it, then the reconcile below is step 4. $(el)"
 echo "step 4: wait for Flux, or reconcile by hand"
 $F reconcile kustomization secret-lab-aws --with-source --timeout 3m 2>&1 | tail -1 | sed 's/^/   /'; echo "   $(el)"
 echo "step 5: [wait began $(el)] the Secret carries the key: $(waitfor 180 "k2 trellis-secrets-static TRELLIS_EMBEDDING_API_KEY" 60)"
-echo "ROTATION: put a length-distinguishable value and wait for the 1m interval"
+echo "ROTATION: put a length-distinguishable value and force a sync (Git refreshes it once a day)"
 T0=$(date -u +%s)
 jq -n --arg v "$(openssl rand -base64 60 | tr -d '\n')" '{Name:"/lab-cluster00/trellis/embedding",Type:"SecureString",Value:$v,Overwrite:true}' > "$tmp/put.json"; chmod 600 "$tmp/put.json"
 aws ssm put-parameter --cli-input-json "file://$tmp/put.json" --query Version --output text | sed 's/^/   version /'
+$K -n $NS annotate externalsecret trellis-secrets-static force-sync="$(date +%s%N)" --overwrite >/dev/null
 echo "   [wait began $(el)] Secret carries the longer value: $(waitfor 180 "k2 trellis-secrets-static TRELLIS_EMBEDDING_API_KEY" 108)"
 rm -rf "$tmp"
 echo "AWS friction end=$(now); steps to add: 6, same as the Vault half, with one put-parameter in place of one kv put"
