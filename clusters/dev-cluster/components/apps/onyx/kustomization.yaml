@@ -9,3 +9,5 @@ resources:
 
 patches:
   - path: helm-release.yaml
+  # Onyx is off by default. Comment out the next line to turn it back on.
+  - path: disabled.yaml
