@@ -21,6 +21,7 @@ resources:
 - kubeclaw.yaml
 - openclaw-operator.yaml
 - sealed-secrets.yaml
+- stakater.yaml
 - signoz.yaml
 - tofu-controller.yaml
 - ww-gitops.yaml

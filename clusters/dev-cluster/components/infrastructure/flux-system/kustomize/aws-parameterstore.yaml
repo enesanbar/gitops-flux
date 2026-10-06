@@ -1,0 +1,22 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: aws-parameterstore
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 30s
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./clusters/dev-cluster/components/infrastructure/aws-parameterstore
+  prune: true
+  wait: true
+  # kstatus reads an object with no status yet as ready; this waits for the store's own Ready.
+  healthCheckExprs:
+  - apiVersion: external-secrets.io/v1
+    kind: ClusterSecretStore
+    current: has(status.conditions) && status.conditions.exists(e, e.type == 'Ready' && e.status == 'True')
+  dependsOn:
+  - name: external-secrets

@@ -10,7 +10,7 @@ spec:
   chart:
     spec:
       chart: external-secrets
-      version: 2.10.0
+      version: 2.11.0
       sourceRef:
         kind: HelmRepository
         name: external-secrets
@@ -27,7 +27,9 @@ spec:
     replicaCount: 1
     leaderElect: true
     installCRDs: true
-    processClusterStore: false
+    # On, as on a tenant cluster: a tenant is handed one credential, and one ClusterSecretStore
+    # reads it for every application (docs/secret-management/CONVENTIONS.md §2).
+    processClusterStore: true
     processClusterExternalSecret: false
     processPushSecret: false
     processClusterPushSecret: false

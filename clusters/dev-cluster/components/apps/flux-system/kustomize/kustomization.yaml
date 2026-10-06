@@ -5,4 +5,6 @@ resources:
 - kubia.yaml
 - onyx.yaml
 - trellis.yaml
+- trellis-secrets.yaml
+- ssm-app-secrets.yaml
 #- fleetman-microservices.yaml

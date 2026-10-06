@@ -1,0 +1,55 @@
+# A consumer that mounts each certificate Secret as a DIRECTORY (no subPath), so the kubelet can
+# refresh the files in place; the experiment reads the files' fingerprints, never their contents.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consumer
+  namespace: secret-lab-aws
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: consumer
+  template:
+    metadata:
+      labels:
+        app: consumer
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: consumer
+        image: quay.io/prometheus/busybox:latest
+        command: ['sh', '-c', 'while true; do sleep 3600; done']
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        volumeMounts:
+        - name: composed
+          mountPath: /secrets/composed
+          readOnly: true
+        - name: minted
+          mountPath: /secrets/minted
+          readOnly: true
+        - name: wildcard
+          mountPath: /tls/wildcard
+          readOnly: true
+      volumes:
+      - name: composed
+        secret:
+          secretName: trellis-secrets-static
+      - name: minted
+        secret:
+          secretName: trellis-secrets-vault-minted
+      - name: wildcard
+        secret:
+          secretName: wildcard-from-ssm
+          optional: true
