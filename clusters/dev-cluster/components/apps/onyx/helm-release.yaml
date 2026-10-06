@@ -24,7 +24,7 @@ spec:
       # memory limit, not the heap.
       opensearchJavaOpts: "-Xms1g -Xmx1g"
       resources:
-        requests: {cpu: 250m, memory: 2Gi}
+        requests: {cpu: 75m, memory: 2Gi}
         limits: {cpu: "2", memory: 3Gi}
 
     # ----- Dev sizing -----

@@ -8,3 +8,13 @@ spec:
     global:
       redis:
         password: password
+    # The chart's "nano" preset caps each pod at 150m CPU, and the replicas' 2s readiness probe
+    # timed out under that cap: hundreds of restarts a day. Median use is ~25m per pod.
+    master:
+      resources:
+        requests: {cpu: 25m, memory: 64Mi}
+        limits: {cpu: 500m, memory: 192Mi}
+    replica:
+      resources:
+        requests: {cpu: 25m, memory: 64Mi}
+        limits: {cpu: 500m, memory: 192Mi}

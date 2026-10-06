@@ -96,5 +96,5 @@ spec:
               cpu: 2000m
               memory: 2000Mi
             requests:
-              cpu: 500m
-              memory: 1700Mi
+              cpu: 50m
+              memory: 640Mi

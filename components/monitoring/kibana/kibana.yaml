@@ -23,10 +23,11 @@ spec:
           env:
             # Cap the Node heap below the container limit so the kernel OOM killer never wins the race.
             - name: NODE_OPTIONS
-              value: "--max-old-space-size=800"
+              value: "--max-old-space-size=1024"
           resources:
             requests:
               cpu: 200m
               memory: 1Gi
             limits:
-              memory: 1Gi
+              cpu: 2000m
+              memory: 1536Mi
