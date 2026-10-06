@@ -20,4 +20,6 @@ spec:
     celery_worker_monitoring: {replicaCount: 0}
     celery_worker_primary: {replicaCount: 0}
     celery_worker_user_file_processing: {replicaCount: 0}
-    opensearch: {replicas: 0}
+    # The subchart pins one replica while singleNode is true and ignores replicas; at zero pods the
+    # single-node setting has nothing to configure, and commenting this patch out restores it.
+    opensearch: {singleNode: false, replicas: 0}
