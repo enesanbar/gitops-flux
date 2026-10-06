@@ -18,3 +18,4 @@ spec:
       resources:
         requests: {cpu: 25m, memory: 64Mi}
         limits: {cpu: 500m, memory: 192Mi}
+      replicaCount: 1
