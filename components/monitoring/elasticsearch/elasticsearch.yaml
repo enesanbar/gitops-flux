@@ -28,10 +28,9 @@ spec:
             - name: elasticsearch
               resources:
                 requests:
-                  cpu: 125m
+                  cpu: 150m
                   memory: 2Gi
                 limits:
-                  cpu: 1000m
                   memory: 2Gi
       volumeClaimTemplates:
         # Yields PVC elasticsearch-data-elasticsearch-es-default-0; the cluster overlay pre-binds a
