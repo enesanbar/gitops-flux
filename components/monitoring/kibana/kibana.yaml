@@ -21,12 +21,12 @@ spec:
       containers:
         - name: kibana
           env:
-            # Cap the Node heap below the container limit so the kernel OOM killer never wins the race.
+            # Cap Node's old space well below the container limit: code, buffers and new space need the rest.
             - name: NODE_OPTIONS
-              value: "--max-old-space-size=800"
+              value: "--max-old-space-size=1024"
           resources:
             requests:
               cpu: 200m
               memory: 1Gi
             limits:
-              memory: 1Gi
+              memory: 1536Mi

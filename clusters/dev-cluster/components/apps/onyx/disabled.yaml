@@ -1,0 +1,25 @@
+# Turns Onyx off by scaling every chart workload and OpenSearch to zero. The release, its Secrets,
+# the Postgres cluster and the volumes all stay, so turning it back on resumes where it stopped;
+# uninstalling the release instead would delete the Secrets the chart owns.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: onyx
+  namespace: onyx
+spec:
+  values:
+    inferenceCapability: {replicaCount: 0}
+    indexCapability: {replicaCount: 0}
+    webserver: {replicaCount: 0}
+    api: {replicaCount: 0}
+    celery_beat: {replicaCount: 0}
+    celery_worker_heavy: {replicaCount: 0}
+    celery_worker_docprocessing: {replicaCount: 0}
+    celery_worker_docfetching: {replicaCount: 0}
+    celery_worker_light: {replicaCount: 0}
+    celery_worker_monitoring: {replicaCount: 0}
+    celery_worker_primary: {replicaCount: 0}
+    celery_worker_user_file_processing: {replicaCount: 0}
+    # The subchart pins one replica while singleNode is true and ignores replicas; at zero pods the
+    # single-node setting has nothing to configure, and commenting this patch out restores it.
+    opensearch: {singleNode: false, replicas: 0}

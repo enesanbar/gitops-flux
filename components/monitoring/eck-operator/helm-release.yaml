@@ -29,7 +29,7 @@ spec:
     # Watches all namespaces (managedNamespaces: []), so the Elastic CRs can stay in `monitoring`.
     resources:
       requests:
-        cpu: 100m
+        cpu: 10m
         memory: 150Mi
       limits:
         memory: 1Gi

@@ -5,19 +5,18 @@ resources:
 - cert-issuer.yaml
 - cert-manager.yaml
 - cnpg-system.yaml
-- eck-operator.yaml
-- elasticsearch.yaml
-- filebeat.yaml
+# The Elastic stack (ECK, Elasticsearch, Kibana, Logstash, Filebeat) is off by default: it duplicates
+# the Loki/Grafana pipeline and is the lab's heaviest idle load. Uncomment to turn it on; Flux prunes
+# it again when commented. Elasticsearch's data stays on its hostPath volume either way.
+#- elastic-stack
 - grafana-observability-dashboards.yaml
 - grafana-observability-datasources.yaml
 - headlamp.yaml
 - ingress-nginx.yaml
 - jaeger.yaml
 - keycloak.yaml
-- kibana.yaml
 - kube-prometheus-stack.yaml
 - kubeclaw-instances.yaml
-- logstash.yaml
 - loki.yaml
 - metallb.yaml
 - metallb-config.yaml

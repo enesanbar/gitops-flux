@@ -9,3 +9,5 @@ spec:
     # SAN, so metrics-server can't verify them. Dev-cluster only.
     args:
       - --kubelet-insecure-tls
+    resources:
+      requests: {cpu: 10m, memory: 128Mi}

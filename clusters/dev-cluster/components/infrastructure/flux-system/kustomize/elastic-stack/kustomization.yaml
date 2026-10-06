@@ -1,0 +1,11 @@
+---
+# The Elastic log pipeline: the ECK operator, Elasticsearch, Kibana, Logstash and Filebeat. One
+# entry in the parent registry switches all five on or off together; nothing outside depends on them.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- eck-operator.yaml
+- elasticsearch.yaml
+- filebeat.yaml
+- kibana.yaml
+- logstash.yaml

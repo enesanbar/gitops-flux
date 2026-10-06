@@ -51,3 +51,8 @@ spec:
 
     redis:
       enabled: false
+
+    resources:
+      main:
+        requests: {cpu: 25m, memory: 512Mi}
+        limits: {cpu: "1", memory: 1Gi}

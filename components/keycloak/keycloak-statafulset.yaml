@@ -11,7 +11,7 @@ metadata:
 spec:
   serviceName: keycloak-discovery
   # Run with one replica to save resources, or with two replicas to allow for rolling updates for configuration changes
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: keycloak
@@ -96,5 +96,5 @@ spec:
               cpu: 2000m
               memory: 2000Mi
             requests:
-              cpu: 500m
-              memory: 1700Mi
+              cpu: 50m
+              memory: 640Mi

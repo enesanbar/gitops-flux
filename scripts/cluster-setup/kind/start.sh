@@ -181,6 +181,15 @@ create_cluster() {
   fi
 }
 
+# kind ships kindnet with a 50Mi memory limit, below its own ~75MB binary, so the binary's pages are
+# evicted and re-read from disk continuously: measured at terabytes of reads a day, and CPU-throttled
+# in most periods. kind never reconciles the DaemonSet, so the fix is applied on every run, after the
+# kubeconfig is exported, and is idempotent on an existing cluster.
+size_kindnet() {
+  kubectl --context "kind-${CLUSTER_NAME}" -n kube-system patch daemonset kindnet --type=json \
+    -p='[{"op":"replace","path":"/spec/template/spec/containers/0/resources","value":{"requests":{"cpu":"50m","memory":"64Mi"},"limits":{"cpu":"500m","memory":"200Mi"}}}]' >/dev/null
+}
+
 merge_kubeconfig() {
   echo "==> Step 3: Merge kubeconfig"
   mkdir -p "${HOME}/.kube"
@@ -388,6 +397,7 @@ main() {
   create_network
   create_cluster
   merge_kubeconfig
+  size_kindnet
   start_proxies
   start_dnsmasq
   configure_host_dns
