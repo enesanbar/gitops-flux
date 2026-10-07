@@ -1,0 +1,19 @@
+# Server mode only: start.sh appends this to config.<topology>.yaml and never
+# uses it on its own. The values come from KIND_* variables; see README.md,
+# "Server mode". Top-level patches apply to every node.
+kubeadmConfigPatches:
+  # A merge patch replaces lists, so this re-lists kind's own SANs (localhost
+  # and the API bind address) before the ones remote clients use.
+  - |
+    kind: ClusterConfiguration
+    apiServer:
+      certSANs: [${KIND_CERT_SANS}]
+  # Merges into kind's KubeletConfiguration: its imagefs.available and
+  # nodefs.inodesFree stay at kind's 0% (disabled).
+  - |
+    kind: KubeletConfiguration
+    systemReserved:
+      memory: "${KIND_SYSTEM_RESERVED_MEMORY}"
+    evictionHard:
+      memory.available: "${KIND_EVICTION_MEMORY_AVAILABLE}"
+      nodefs.available: "${KIND_EVICTION_NODEFS_AVAILABLE}"
