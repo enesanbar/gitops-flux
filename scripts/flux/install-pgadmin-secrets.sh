@@ -57,11 +57,16 @@ ${KUBECTL} -n "${NAMESPACE}" create secret generic pgadmin-auth \
   --dry-run=client -o yaml | ${KUBECTL} apply -f -
 
 # read_db_password <namespace> <secret> [key]: prints the decoded value, or
-# nothing if the Secret does not exist yet.
+# nothing if the namespace, the Secret or the key does not exist yet. Any other
+# failure (no API, no access, a bad value) returns non-zero, which stops the
+# script at the caller's assignment. The explicit `|| return` is needed because
+# a command substitution does not inherit `set -e`.
 read_db_password() {
-  local ns="$1" secret="$2" key="${3:-password}"
-  ${KUBECTL} -n "${ns}" get secret "${secret}" -o "jsonpath={.data.${key}}" 2>/dev/null \
-    | { base64 --decode 2>/dev/null || true; }
+  local ns="$1" secret="$2" key="${3:-password}" encoded
+  encoded="$(${KUBECTL} -n "${ns}" get secret "${secret}" --ignore-not-found \
+    -o "jsonpath={.data.${key}}")" || return 1
+  [ -n "${encoded}" ] || return 0
+  printf '%s' "${encoded}" | base64 --decode
 }
 
 # --from-literal, never a file: a trailing newline would be sent as part of
@@ -96,8 +101,8 @@ fi
 # keycloak: a plain Deployment whose POSTGRES_PASSWORD is hardcoded in
 # components/keycloak/postgres-deployment.yaml. Read it from the live
 # Deployment so this stays correct if that manifest ever moves to a Secret.
-keycloak_password="$(${KUBECTL} -n keycloak get deploy postgres \
-  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="POSTGRES_PASSWORD")].value}' 2>/dev/null || true)"
+keycloak_password="$(${KUBECTL} -n keycloak get deploy postgres --ignore-not-found \
+  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="POSTGRES_PASSWORD")].value}')"
 if [ -n "${keycloak_password}" ]; then
   ARGS+=(--from-literal=keycloak="${keycloak_password}")
   FOUND+=(keycloak)
