@@ -364,6 +364,17 @@ The host name in `--server` must be one of `KIND_API_SANS`. Before merging the f
 - **n8n's key adoption is off under the switch.** Without it, `install-n8n-secrets.sh` creates a missing `n8n-encryption-key` from `n8n/config`. If svc has the config but no key file, write the key file on svc from the config's `encryptionKey` first, then copy it.
 - **pgAdmin's closing hint**, `Password: cat …`, points into the copy you just deleted. Read the file on svc instead.
 
+**The AWS credentials come from the laptop's own custody**, not from svc, so they need no copy. After pgAdmin, and before `flux bootstrap`, `bootstrap.sh` runs `scripts/secrets/aws-credentials.sh` against the custody directory (`SECRET_STATE_DIR`, default `.local/secret-management/dev-cluster`) to create the two Secrets the Parameter Store stores read:
+
+| Secret | Read by | From custody | Step |
+| --- | --- | --- | --- |
+| `secret-lab-aws/aws-credentials` | the `aws-static` SecretStore | `aws/access_key_id`, `aws/secret_access_key` | `aws-credentials.sh apply` |
+| `external-secrets/aws-credentials` | the `aws-parameterstore` ClusterSecretStore and `ssm-app-secrets` | `aws/tenant/<slot>/` | `aws-credentials.sh tenant <slot>` |
+
+- **`AWS_TENANT_SLOT`** picks the tenant key: unset means `a`, `b` picks the other one, and `none` skips the step. Any other value, empty included, stops bootstrap before it touches the cluster.
+- **A key missing from custody** prints a `Skipped` line naming the command that creates it, and bootstrap carries on. A failed install prints a `WARN` line with the command to re-run, and bootstrap carries on too: Flux comes up either way, and only the AWS-backed stores wait for the Secret.
+- **Vault's `aws-lab` engine isn't part of bootstrap.** It lives in Vault, so run `scripts/secrets/vault.sh aws` once Vault is unsealed, as before.
+
 ### Exposure and the firewall
 
 With `KIND_BIND_ADDR=0.0.0.0` in server mode, ports 80, 443 and 6443 listen on every interface, and svc's guest firewall is the filter. Docker publishes these ports through DNAT, so their packets take the forward path, not input. A firewall that only filters input, like plain ufw rules, never sees them: filter them in Docker's `DOCKER-USER` chain or an equivalent forward hook.
