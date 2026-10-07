@@ -58,6 +58,53 @@ preflight_key_material() {
 }
 preflight_key_material
 
+# AWS_TENANT_SLOT names the tenant key install_aws_credentials delivers: a or b,
+# or none to skip it. Unset means a. Checked here so a typo stops bootstrap
+# before it touches the cluster, rather than silently skipping the delivery.
+preflight_aws_tenant_slot() {
+  [ -n "${AWS_TENANT_SLOT+set}" ] || return 0
+  case "${AWS_TENANT_SLOT}" in
+    a | b | none) ;;
+    *)
+      echo "ERROR: AWS_TENANT_SLOT must be a, b or none (got '${AWS_TENANT_SLOT}'); unset it for the default. Nothing was changed." >&2
+      exit 1
+      ;;
+  esac
+}
+preflight_aws_tenant_slot
+
+# The two AWS credential Secrets the Parameter Store stores read, from private
+# custody: secret-lab-aws/aws-credentials (the static key, for aws-static) and
+# external-secrets/aws-credentials (a tenant key, standing in for a platform's
+# delivery, for aws-parameterstore). The custody path mirrors common.sh, which
+# aws-credentials.sh sources; checking the files here, rather than calling the
+# script and reading its exit code, keeps a missing key a skip and nothing else.
+# A failed install only warns: no AWS problem may keep Flux from bootstrapping,
+# and the step can be re-run on its own.
+install_aws_credentials() {
+  local aws_state slot tenant_dir
+  local aws_script="${SCRIPT_DIR}/../secrets/aws-credentials.sh"
+  aws_state="${SECRET_STATE_DIR:-$(cd "${SCRIPT_DIR}/../.." && pwd)/.local/secret-management/dev-cluster}/aws"
+
+  if [ -s "${aws_state}/access_key_id" ] && [ -s "${aws_state}/secret_access_key" ]; then
+    KUBE_CONTEXT="${KUBE_CONTEXT_NAME}" "${aws_script}" apply ||
+      echo "WARN: secret-lab-aws/aws-credentials was not installed; fix the error above, then run scripts/secrets/aws-credentials.sh apply" >&2
+  else
+    echo "==> Skipped secret-lab-aws/aws-credentials: no static AWS key in ${aws_state}. Import it with scripts/secrets/aws-credentials.sh import <region> <reader-role-arn>, then run aws-credentials.sh apply."
+  fi
+
+  slot="${AWS_TENANT_SLOT-a}"
+  tenant_dir="${aws_state}/tenant/${slot}"
+  if [ "${slot}" = none ]; then
+    echo "==> Skipped external-secrets/aws-credentials: AWS_TENANT_SLOT=none."
+  elif [ -s "${tenant_dir}/access_key_id" ] && [ -s "${tenant_dir}/secret_access_key" ]; then
+    KUBE_CONTEXT="${KUBE_CONTEXT_NAME}" "${aws_script}" tenant "${slot}" ||
+      echo "WARN: external-secrets/aws-credentials was not installed; fix the error above, then run scripts/secrets/aws-credentials.sh tenant ${slot}" >&2
+  else
+    echo "==> Skipped external-secrets/aws-credentials: no tenant key ${slot} in ${tenant_dir}. Create it with scripts/secrets/experiments/aws/tenant-iam.sh apply, then run aws-credentials.sh tenant ${slot}."
+  fi
+}
+
 kubectl config use-context "${KUBE_CONTEXT_NAME}"
 
 # Install this machine's mkcert CA as the cert-manager signing secret.
@@ -82,6 +129,10 @@ KUBE_CONTEXT="${KUBE_CONTEXT_NAME}" "${SCRIPT_DIR}/../secrets/prepare-local.sh"
 # is skipped, and the Secret is mounted as a directory so a later run refreshes
 # it without restarting the pod.
 "${SCRIPT_DIR}/install-pgadmin-secrets.sh" "${KUBE_CONTEXT_NAME}"
+
+# The AWS credential Secrets, when their keys are in custody (see above). Vault's
+# aws-lab engine is separate: run vault.sh aws once Vault is unsealed.
+install_aws_credentials
 
 # Install the flux components in the cluster
 flux bootstrap github \
