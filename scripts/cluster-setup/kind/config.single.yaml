@@ -21,7 +21,7 @@ nodes:
           kubeletExtraArgs:
             node-labels: "gitops-flux.local/data-pool-1=true,gitops-flux.local/data-pool-2=true"
     extraMounts:
-      - hostPath: ${SCRIPT_DIR}/data-pool-1
+      - hostPath: ${KIND_DATA_ROOT}/data-pool-1
         containerPath: /mnt/data-pool-1
-      - hostPath: ${SCRIPT_DIR}/data-pool-2
+      - hostPath: ${KIND_DATA_ROOT}/data-pool-2
         containerPath: /mnt/data-pool-2

@@ -12,7 +12,13 @@ DNS_PORT="15353"
 DNSMASQ_IMAGE="4km3/dnsmasq:2.90-r3"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OS="$(uname -s)"
-export SCRIPT_DIR  # substituted into the config templates (extraMounts hostPath)
+
+# Where the data-pool-{1,2} host dirs live. Next to this script by default; a
+# server keeps them on its data disk instead. An explicit value is validated
+# (validate_data_root) before anything uses it.
+KIND_DATA_ROOT_SET="${KIND_DATA_ROOT:+1}"
+KIND_DATA_ROOT="${KIND_DATA_ROOT:-${SCRIPT_DIR}}"
+export KIND_DATA_ROOT  # substituted into the config templates (extraMounts hostPath)
 
 # Topology selection. Default: single-node (1 untainted control-plane carrying
 # both storage pools). Use multi for testing scheduling / affinity / drains.
@@ -30,6 +36,43 @@ BIND_ADDR="${KIND_BIND_ADDR:-127.0.0.1}"
 # Used to drive a cluster running on another machine from this laptop.
 REMOTE_HOST="${KIND_REMOTE_HOST:-}"
 
+# --print-config: print the kind config this run would create a cluster from,
+# then exit without touching Docker.
+PRINT_CONFIG=0
+
+# What check_existing_cluster found: whether the cluster exists, and what its
+# node containers actually have.
+CP_NODE="${CLUSTER_NAME}-control-plane"
+CLUSTER_EXISTS=0
+HAVE_TOPOLOGY=""
+HAVE_API=""
+HAVE_POOLS=""
+HAVE_ROOT=""
+# 1 only while this run's own kind create is running: the interrupt trap may
+# delete that cluster and nothing else.
+CREATE_STARTED=0
+
+# Server mode: the cluster runs as a long-lived service on a Linux host that
+# other machines reach over the network, and the host's own configuration
+# management owns dnsmasq, host DNS and sysctls. See README.md, "Server mode".
+SERVER_MODE="${KIND_SERVER:-0}"
+API_ADDR="0.0.0.0"
+API_PORT="${KIND_API_PORT:-6443}"
+API_SANS="${KIND_API_SANS:-}"
+# Sized for a 16 GiB host; README.md, "Server mode", has the arithmetic.
+SYSTEM_RESERVED_MEMORY="${KIND_SYSTEM_RESERVED_MEMORY:-2Gi}"
+EVICTION_MEMORY_AVAILABLE="${KIND_EVICTION_MEMORY_AVAILABLE:-2Gi}"
+EVICTION_NODEFS_AVAILABLE="${KIND_EVICTION_NODEFS_AVAILABLE:-10%}"
+
+# Plain-HTTP registries the nodes' containerd may pull from, as comma-separated
+# host:port. Works in any mode; a server points this at its own registry.
+HTTP_REGISTRIES="${KIND_HTTP_REGISTRIES:-}"
+
+die() {
+  echo "ERROR: $*" >&2
+  exit 2
+}
+
 parse_args() {
   for arg in "$@"; do
     case "${arg}" in
@@ -37,9 +80,11 @@ parse_args() {
       --remote-host=*)  REMOTE_HOST="${arg#*=}" ;;
       --bind-address=*) BIND_ADDR="${arg#*=}" ;;
       --expose-lan)     BIND_ADDR="0.0.0.0" ;;
+      --print-config)   PRINT_CONFIG=1 ;;
+      --server)         SERVER_MODE=1 ;;
       -h|--help)
         cat <<EOF
-Usage: $(basename "$0") [--topology=single|multi] [--expose-lan | --bind-address=IP]
+Usage: $(basename "$0") [--topology=single|multi] [--expose-lan | --bind-address=IP] [--server] [--print-config]
        $(basename "$0") --remote-host=IP
 
 Server profiles (create a cluster on this machine):
@@ -56,16 +101,45 @@ Client mode (no cluster; point *.${DNS_DOMAIN} at a remote cluster):
                         Use this on a laptop to reach a cluster started with
                         --expose-lan on another machine at IP.
 
+Server mode (a long-lived cluster other machines use; Linux):
+  --server              API on 0.0.0.0:\${KIND_API_PORT} with certSANs from
+                        \${KIND_API_SANS}, kubelet reserves, nodes restart
+                        unless-stopped. Never runs sudo and never touches dnsmasq,
+                        host DNS or sysctls: the host's own tooling owns those.
+
+  --print-config        print the rendered kind config and exit (no Docker needed)
+
 Env vars:
   KIND_TOPOLOGY=single|multi  alternative to --topology
   KIND_BIND_ADDR=IP           alternative to --bind-address
   KIND_REMOTE_HOST=IP         alternative to --remote-host
   KIND_SKIP_SYSCTL=1          skip the inotify limit adjustment (Linux only)
+  KIND_DATA_ROOT=DIR          absolute dir holding data-pool-{1,2} (default: this script's dir)
+  KIND_HTTP_REGISTRIES=h:p,.. let the nodes pull from these registries over plain HTTP
+  KIND_SERVER=1               alternative to --server
+  KIND_API_SANS=a,b           server mode, required: extra API certificate SANs (names or IPs)
+  KIND_API_PORT=6443          server mode: host port for the API server
+  KIND_SYSTEM_RESERVED_MEMORY=2Gi       server mode: kubelet systemReserved.memory
+  KIND_EVICTION_MEMORY_AVAILABLE=2Gi    server mode: kubelet evictionHard memory.available
+  KIND_EVICTION_NODEFS_AVAILABLE=10%    server mode: kubelet evictionHard nodefs.available
 EOF
         exit 0
         ;;
     esac
   done
+
+  case "${SERVER_MODE}" in
+    0|1) ;;
+    *) die "KIND_SERVER must be 0 or 1 (got '${SERVER_MODE}')" ;;
+  esac
+  if [ "${SERVER_MODE}" = "1" ] && [ -n "${REMOTE_HOST}" ]; then
+    die "server mode runs a cluster here; --remote-host runs none. Pick one."
+  fi
+  # Checked here, before anything runs: client mode would otherwise start
+  # dnsmasq and write host DNS instead of printing.
+  if [ "${PRINT_CONFIG}" = "1" ] && [ -n "${REMOTE_HOST}" ]; then
+    die "--print-config prints the config of a cluster on this host; client mode (--remote-host / KIND_REMOTE_HOST) creates none. Pick one."
+  fi
 
   # Client mode does not create a cluster, so topology/config is irrelevant.
   if [ -n "${REMOTE_HOST}" ]; then
@@ -77,6 +151,66 @@ EOF
     multi)  CONFIG_FILE="${SCRIPT_DIR}/config.multi.yaml" ;;
     *) echo "ERROR: unknown topology '${TOPOLOGY}' (expected: single | multi)" >&2; exit 2 ;;
   esac
+
+  if [ -n "${KIND_DATA_ROOT_SET}" ]; then
+    validate_data_root
+  fi
+
+  # Lists are matched whole, before anything splits them: read stops at the
+  # first newline, so checking items one by one would silently drop the rest.
+  local registry='[A-Za-z0-9.-]+:[0-9]+'
+  HTTP_REGISTRIES="${HTTP_REGISTRIES// /}"
+  if [ -n "${HTTP_REGISTRIES}" ] && ! [[ "${HTTP_REGISTRIES}" =~ ^${registry}(,${registry})*$ ]]; then
+    die "KIND_HTTP_REGISTRIES must be host:port entries, comma-separated on one line (got '${HTTP_REGISTRIES}')"
+  fi
+
+  if [ "${SERVER_MODE}" = "1" ]; then
+    validate_server_mode
+  fi
+}
+
+# The data root lands in an unquoted YAML scalar (extraMounts hostPath), where a
+# '#', a ': ' or a newline would change the config, so an explicit value is held
+# to plain path characters. The default, this script's directory, is left alone:
+# it renders exactly as it always has.
+validate_data_root() {
+  while [ "${KIND_DATA_ROOT}" != "/" ] && [ "${KIND_DATA_ROOT%/}" != "${KIND_DATA_ROOT}" ]; do
+    KIND_DATA_ROOT="${KIND_DATA_ROOT%/}"
+  done
+  [[ "${KIND_DATA_ROOT}" =~ ^(/[A-Za-z0-9._-]+)+$ ]] \
+    || die "KIND_DATA_ROOT must be an absolute path made of letters, digits, '.', '_', '-' and '/' (got '${KIND_DATA_ROOT}')"
+}
+
+# Server-mode values are spliced into YAML, so they are checked against a strict
+# character set first. kind would reject most mistakes, but only after it has
+# started creating nodes.
+validate_server_mode() {
+  local quantity='[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?'
+  local san='[A-Za-z0-9.:-]+'
+
+  API_SANS="${API_SANS// /}"
+  [ -n "${API_SANS}" ] \
+    || die "server mode needs KIND_API_SANS: the names and IPs remote clients use for the API. They are fixed when the cluster is created."
+  # Matched whole for the same reason as KIND_HTTP_REGISTRIES.
+  [[ "${API_SANS}" =~ ^${san}(,${san})*$ ]] \
+    || die "KIND_API_SANS must be host names or IPs, comma-separated on one line (got '${API_SANS}')"
+
+  # No leading zeros: YAML would read 06443 as octal, i.e. port 3363.
+  [[ "${API_PORT}" =~ ^[1-9][0-9]{0,4}$ ]] && [ "${API_PORT}" -le 65535 ] \
+    || die "KIND_API_PORT must be a port number from 1 to 65535 without leading zeros (got '${API_PORT}')"
+  [[ "${SYSTEM_RESERVED_MEMORY}" =~ ^${quantity}$ ]] \
+    || die "KIND_SYSTEM_RESERVED_MEMORY must be a quantity like 2Gi (got '${SYSTEM_RESERVED_MEMORY}')"
+  [[ "${EVICTION_MEMORY_AVAILABLE}" =~ ^(${quantity}|[0-9]+(\.[0-9]+)?%)$ ]] \
+    || die "KIND_EVICTION_MEMORY_AVAILABLE must be a quantity or a percentage (got '${EVICTION_MEMORY_AVAILABLE}')"
+  [[ "${EVICTION_NODEFS_AVAILABLE}" =~ ^(${quantity}|[0-9]+(\.[0-9]+)?%)$ ]] \
+    || die "KIND_EVICTION_NODEFS_AVAILABLE must be a quantity or a percentage (got '${EVICTION_NODEFS_AVAILABLE}')"
+
+  # render_config splices into the template's networking: block and appends
+  # top-level keys; both assume the layout the templates have today.
+  if [ "$(grep -c '^networking:$' "${CONFIG_FILE}")" != "1" ] \
+     || grep -qE '^(kubeadmConfigPatches:|  apiServerAddress:|  apiServerPort:)' "${CONFIG_FILE}"; then
+    die "$(basename "${CONFIG_FILE}") no longer has the layout server mode patches (one networking: block, no top-level kubeadmConfigPatches); update render_config"
+  fi
 }
 
 preflight() {
@@ -112,8 +246,206 @@ preflight() {
     exit 1
   fi
 
+  # Before the first change to the host, so a refused re-run changes nothing.
+  check_existing_cluster
+
   if [ "${OS}" = "Linux" ]; then
     ensure_inotify_limits
+  fi
+}
+
+# kind bakes the topology, data root, API endpoint, SANs and kubelet settings
+# into a cluster when it creates it, so a re-run can't change them. They are
+# read back from the node containers, and a re-run that asks for something
+# else, or a cluster that can't be read or looks half-built, is refused before
+# anything changes. start.sh never deletes a cluster it didn't create itself.
+#
+# - Server mode compares everything.
+# - Default mode only reads the container config. A cluster that looks like a
+#   default one (API on 127.0.0.1, pools in KIND_DATA_ROOT) goes ahead exactly
+#   as before, topology message included.
+check_existing_cluster() {
+  local clusters nodes
+  # Output and status apart: a failed listing is not "no cluster".
+  clusters="$(kind get clusters 2>/dev/null)" \
+    || refuse "'kind get clusters' failed, so it is unknown whether ${CLUSTER_NAME} exists." \
+              "Fix that, then run start.sh again."
+  printf '%s\n' "${clusters}" | grep -qx "${CLUSTER_NAME}" || return 0
+  CLUSTER_EXISTS=1
+
+  nodes="$(kind get nodes --name "${CLUSTER_NAME}" 2>/dev/null)" \
+    || refuse "'kind get nodes' failed for it."
+  printf '%s\n' "${nodes}" | grep -qx "${CP_NODE}" \
+    || refuse "It has no control-plane node, only: $(printf '%s\n' "${nodes}" | paste -sd ' ' -)." \
+              "An interrupted create or teardown leaves a cluster like this."
+
+  read_container_facts "${nodes}"
+  if [ "${SERVER_MODE}" = "1" ]; then
+    check_server_cluster
+  else
+    check_default_cluster
+  fi
+}
+
+# Port bindings and mounts exist from the moment kind creates a node, and
+# docker inspect reads them whether the node runs or not.
+read_container_facts() {
+  local nodes="$1" node mounts all=""
+  HAVE_TOPOLOGY="$(topology_of "${nodes}")"
+  HAVE_API="$(docker inspect -f '{{range $port, $binds := .HostConfig.PortBindings}}{{if eq $port "6443/tcp"}}{{range $binds}}{{.HostIp}}:{{.HostPort}}{{end}}{{end}}{{end}}' "${CP_NODE}" 2>/dev/null)" \
+    || refuse "Couldn't read the API port binding of ${CP_NODE} (docker inspect)."
+  for node in ${nodes}; do
+    mounts="$(docker inspect -f '{{range .Mounts}}{{.Destination}}={{.Source}}{{println}}{{end}}' "${node}" 2>/dev/null)" \
+      || refuse "Couldn't read the mounts of ${node} (docker inspect)."
+    all="${all}${mounts}"$'\n'
+  done
+  HAVE_POOLS="$(printf '%s' "${all}" | grep -E '^/mnt/data-pool-[12]=' || true)"
+  HAVE_ROOT="$(printf '%s\n' "${HAVE_POOLS}" | sed -n 's#^/mnt/data-pool-\([12]\)=\(.*\)/data-pool-\1$#\2#p' | head -n 1)"
+}
+
+topology_of() {
+  case "$(printf '%s\n' "$1" | sort | paste -sd ' ' -)" in
+    "${CP_NODE}") echo single ;;
+    "${CP_NODE} ${CLUSTER_NAME}-worker ${CLUSTER_NAME}-worker2") echo multi ;;
+    *) echo "other ($(printf '%s\n' "$1" | wc -l | tr -d ' ') nodes)" ;;
+  esac
+}
+
+# Returns 0 if every pool is mounted from $1, 1 if one isn't, 2 if none is mounted.
+pools_from() {
+  local root="$1" line found=2
+  while IFS= read -r line; do
+    [ -n "${line}" ] || continue
+    found=0
+    pool_source_is "${line#*=}" "${root}/data-pool-${line:15:1}" || return 1
+  done <<< "${HAVE_POOLS}"
+  return "${found}"
+}
+
+# Docker Desktop may report a macOS bind source under /host_mnt, and a source
+# reached through a symlink is the same directory, so both count as a match.
+pool_source_is() {
+  [ "$1" = "$2" ] || [ "$1" = "/host_mnt$2" ] || { [ -e "$1" ] && [ "$1" -ef "$2" ]; }
+}
+
+check_default_cluster() {
+  local pools=0
+  case "${HAVE_API}" in
+    127.0.0.1:*) ;;
+    *) refuse "Its API is published on '${HAVE_API:-nothing}', not kind's default 127.0.0.1, so it looks like a server-mode cluster." \
+              "To keep it, run start.sh with the server environment it was created with (KIND_SERVER=1 ...)." ;;
+  esac
+  pools_from "${KIND_DATA_ROOT}" || pools=$?
+  if [ "${pools}" = "1" ]; then
+    refuse "Its data pools are in ${HAVE_ROOT}, not ${KIND_DATA_ROOT}." \
+           "To keep it, run start.sh with KIND_DATA_ROOT=${HAVE_ROOT}."
+  fi
+}
+
+check_server_cluster() {
+  local kubelet kubeadm mismatches
+  local have_sans want_sans have_reserved have_evict_mem have_evict_nodefs
+
+  # The container config first: a cluster made differently (in default mode,
+  # say) is refused for that, not for whatever its files lack.
+  mismatches="$(compare_container_facts)"
+  [ -z "${mismatches}" ] || refuse_mismatch "${mismatches}"
+
+  # kindnet writes its CNI config once kind's create has got through kubeadm
+  # and the CNI install. A half-built cluster has none, and would otherwise
+  # pass this check only to fail after the host has been changed.
+  read_node_file /etc/cni/net.d/10-kindnet.conflist >/dev/null \
+    || refuse "Its control-plane has no CNI config (/etc/cni/net.d/10-kindnet.conflist): kind never finished" \
+              "creating it (an interrupted create leaves this), or its CNI is broken."
+  kubelet="$(read_node_file /var/lib/kubelet/config.yaml)" \
+    || refuse "Couldn't read /var/lib/kubelet/config.yaml in ${CP_NODE}."
+  kubeadm="$(read_node_file /kind/kubeadm.conf)" \
+    || refuse "Couldn't read /kind/kubeadm.conf in ${CP_NODE}."
+
+  have_sans="$(printf '%s\n' "${kubeadm}" | awk '
+    /^  certSANs:/ { inside = 1; next }
+    inside && /^  - / { v = $2; gsub(/"/, "", v); print v; next }
+    inside { exit }' | sort -u | paste -sd , -)"
+  have_reserved="$(yaml_value "${kubelet}" systemReserved memory)"
+  have_evict_mem="$(yaml_value "${kubelet}" evictionHard memory.available)"
+  have_evict_nodefs="$(yaml_value "${kubelet}" evictionHard nodefs.available)"
+  [ -n "${have_sans}" ] \
+    || refuse "Couldn't find apiServer.certSANs in /kind/kubeadm.conf of ${CP_NODE}."
+  [ -n "${have_reserved}" ] && [ -n "${have_evict_mem}" ] && [ -n "${have_evict_nodefs}" ] \
+    || refuse "Couldn't find systemReserved and evictionHard in /var/lib/kubelet/config.yaml of ${CP_NODE}."
+  want_sans="$({ printf '%s\n' localhost "${API_ADDR}"; printf '%s\n' "${API_SANS}" | tr ',' '\n'; } | sort -u | paste -sd , -)"
+
+  mismatches="$(
+    mismatch_line api_sans "${have_sans}" "${want_sans}"
+    mismatch_line system_reserved_memory "${have_reserved}" "${SYSTEM_RESERVED_MEMORY}"
+    mismatch_line eviction_memory_available "${have_evict_mem}" "${EVICTION_MEMORY_AVAILABLE}"
+    mismatch_line eviction_nodefs_available "${have_evict_nodefs}" "${EVICTION_NODEFS_AVAILABLE}"
+  )"
+  [ -z "${mismatches}" ] || refuse_mismatch "${mismatches}"
+}
+
+compare_container_facts() {
+  mismatch_line topology "${HAVE_TOPOLOGY}" "${TOPOLOGY}"
+  mismatch_line api "${HAVE_API:-no binding}" "${API_ADDR}:${API_PORT}"
+  pools_from "${KIND_DATA_ROOT}" \
+    || echo "data_root: cluster has '${HAVE_ROOT:-no pools}', this run asks for '${KIND_DATA_ROOT}'"
+}
+
+mismatch_line() {
+  [ "$2" = "$3" ] || echo "$1: cluster has '$2', this run asks for '$3'"
+}
+
+# docker cp reads a stopped node too.
+read_node_file() {
+  docker cp "${CP_NODE}:$1" - 2>/dev/null | tar -xOf - 2>/dev/null
+}
+
+# "<section>:" then "  <key>: <value>": the block style kubeadm writes.
+yaml_value() {
+  printf '%s\n' "$1" | awk -v section="$2:" -v key="$3:" '
+    $0 == section { inside = 1; next }
+    inside && /^[^ ]/ { inside = 0 }
+    inside && $1 == key { v = $2; gsub(/"/, "", v); print v; exit }'
+}
+
+refuse_mismatch() {
+  refuse "Its nodes have other settings than this run asks for, and a re-run can't change them:" \
+         "$(printf '%s\n' "$1" | sed 's/^/  /')"
+}
+
+# Every refusal comes through here, before anything on the host has changed.
+refuse() {
+  {
+    echo "ERROR: not touching cluster ${CLUSTER_NAME}. Nothing was changed."
+    printf '%s\n' "$@" | sed 's/^/       /'
+    if [ "${CLUSTER_EXISTS}" = "1" ]; then recreate_hint; fi
+  } >&2
+  exit 2
+}
+
+# The stop command follows the node's actual API binding, never this run's
+# mode: stop.sh outside server mode removes kind-dnsmasq, which a server's
+# configuration management owns.
+recreate_hint() {
+  local stop_cmd="${SCRIPT_DIR}/stop.sh"
+  case "${HAVE_API}" in
+    127.0.0.1:*) ;;
+    ?*) stop_cmd="KIND_SERVER=1 ${stop_cmd}" ;;
+    *)
+      echo "       Its API binding is unknown, so stop.sh could run in the wrong mode and remove kind-dnsmasq."
+      echo "       To recreate it, delete only the cluster: kind delete cluster --name ${CLUSTER_NAME}"
+      echo "       then run start.sh again. The data pools stay on disk."
+      return 0
+      ;;
+  esac
+  if [ -n "${HAVE_ROOT}" ] && [ "${HAVE_ROOT}" != "${SCRIPT_DIR}" ]; then
+    stop_cmd="KIND_DATA_ROOT=${HAVE_ROOT} ${stop_cmd}"
+  fi
+  echo "       To recreate it: ${stop_cmd}"
+  echo "       then run start.sh again. The data pools stay on disk."
+  if [ -n "${HAVE_ROOT}" ] && ! pools_from "${KIND_DATA_ROOT}"; then
+    echo "       The data root changes: move data-pool-1 and data-pool-2 from ${HAVE_ROOT}"
+    echo "       to ${KIND_DATA_ROOT} first, or the new cluster starts empty."
   fi
 }
 
@@ -127,6 +459,13 @@ ensure_inotify_limits() {
   cur_instances="$(sysctl -n fs.inotify.max_user_instances 2>/dev/null || echo 0)"
 
   if [ "${cur_watches}" -ge "${want_watches}" ] && [ "${cur_instances}" -ge "${want_instances}" ]; then
+    return 0
+  fi
+
+  if [ "${SERVER_MODE}" = "1" ]; then
+    echo "    WARN: inotify limits are low (max_user_watches=${cur_watches}, max_user_instances=${cur_instances})"
+    echo "          and server mode leaves sysctls to the host's configuration management —"
+    echo "          pods may crash with 'too many open files'"
     return 0
   fi
 
@@ -170,15 +509,119 @@ create_network() {
 
 create_cluster() {
   echo "==> Step 2: Create kind cluster"
-  if kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}"; then
+  # check_existing_cluster listed the clusters once, before anything changed.
+  if [ "${CLUSTER_EXISTS}" = "1" ]; then
     echo "    Cluster ${CLUSTER_NAME} already exists, skipping create (delete it first to switch topology)"
   else
-    # envsubst is restricted to ${SCRIPT_DIR} so any other ${...} in the
-    # config passes through to kind untouched.
-    # shellcheck disable=SC2016  # the literal '${SCRIPT_DIR}' is envsubst's filter argument
+    # Rendered to a file first: a render failure inside <(...) would not stop
+    # the script, and kind would then build a default cluster from empty input.
+    RENDERED_CONFIG="$(mktemp)"
+    trap 'rm -f "${RENDERED_CONFIG}"' EXIT
+    render_config > "${RENDERED_CONFIG}"
+    if [ "${SERVER_MODE}" = "1" ]; then
+      trap on_create_interrupted INT TERM
+    fi
+    CREATE_STARTED=1
     KIND_EXPERIMENTAL_DOCKER_NETWORK="${DOCKER_NETWORK}" \
-      kind create cluster --config <(envsubst '${SCRIPT_DIR}' < "${CONFIG_FILE}") --wait 60s
+      kind create cluster --config "${RENDERED_CONFIG}" --wait 60s
+    CREATE_STARTED=0
+    if [ "${SERVER_MODE}" = "1" ]; then
+      trap - INT TERM
+    fi
   fi
+}
+
+# kind leaves its nodes behind when it is killed. Server mode deletes them, so
+# an identical retry starts clean, but only for the create this run started.
+on_create_interrupted() {
+  trap - INT TERM
+  if [ "${CREATE_STARTED}" = "1" ]; then
+    kind delete cluster --name "${CLUSTER_NAME}" >/dev/null 2>&1 || true
+  fi
+  exit 130
+}
+
+# Server mode extends the topology config instead of keeping server copies of
+# it, so the node layout (image pin, pools, labels) has one source of truth and
+# the default render never passes through the server code.
+render_config() {
+  if [ "${SERVER_MODE}" != "1" ]; then
+    render_topology_config
+    return
+  fi
+  render_topology_config | add_api_server_endpoint
+  echo
+  render_server_patch
+}
+
+# envsubst is restricted to ${KIND_DATA_ROOT} so any other ${...} in the
+# config passes through to kind untouched.
+render_topology_config() {
+  # shellcheck disable=SC2016  # the literal '${KIND_DATA_ROOT}' is envsubst's filter argument
+  envsubst '${KIND_DATA_ROOT}' < "${CONFIG_FILE}"
+}
+
+# kind takes the API endpoint only from its config, and the templates already
+# have a networking: block (validate_server_mode checked there is one), so the
+# two keys go into it rather than into a second block.
+add_api_server_endpoint() {
+  awk -v addr="${API_ADDR}" -v port="${API_PORT}" '
+    { print }
+    /^networking:$/ { printf "  apiServerAddress: \"%s\"\n  apiServerPort: %s\n", addr, port }
+  '
+}
+
+render_server_patch() {
+  local sans_flow="\"localhost\", \"${API_ADDR}\"" san
+  local -a sans
+  IFS=',' read -r -a sans <<< "${API_SANS}"
+  for san in "${sans[@]}"; do
+    sans_flow="${sans_flow}, \"${san}\""
+  done
+
+  # shellcheck disable=SC2016  # the literal variable list is envsubst's filter argument
+  KIND_CERT_SANS="${sans_flow}" \
+  KIND_SYSTEM_RESERVED_MEMORY="${SYSTEM_RESERVED_MEMORY}" \
+  KIND_EVICTION_MEMORY_AVAILABLE="${EVICTION_MEMORY_AVAILABLE}" \
+  KIND_EVICTION_NODEFS_AVAILABLE="${EVICTION_NODEFS_AVAILABLE}" \
+    envsubst '${KIND_CERT_SANS} ${KIND_SYSTEM_RESERVED_MEMORY} ${KIND_EVICTION_MEMORY_AVAILABLE} ${KIND_EVICTION_NODEFS_AVAILABLE}' \
+    < "${SCRIPT_DIR}/config.server-patch.yaml"
+}
+
+# kind creates nodes with restart policy on-failure:1, so a host reboot would
+# leave the cluster down. Applied on every run; docker update is idempotent.
+set_node_restart_policy() {
+  echo "==> Step 3a: Restart the kind node(s) unless stopped"
+  local nodes node
+  nodes="$(kind get nodes --name "${CLUSTER_NAME}")"
+  [ -n "${nodes}" ] || die "kind lists no nodes for cluster ${CLUSTER_NAME}"
+  for node in ${nodes}; do
+    docker update --restart unless-stopped "${node}" >/dev/null
+    echo "    ${node}: unless-stopped"
+  done
+}
+
+# kind's node images (v0.27+) already point containerd at /etc/containerd/certs.d,
+# so one hosts.toml per registry is all it takes: kind's documented
+# local-registry pattern. containerd reads it at pull time, so nothing restarts.
+# Written on every run because a recreated node starts without it.
+configure_http_registries() {
+  echo "==> Step 3b: Let the kind node(s) pull from plain-HTTP registries"
+  local nodes node registry dir
+  local -a registries
+  nodes="$(kind get nodes --name "${CLUSTER_NAME}")"
+  [ -n "${nodes}" ] || die "kind lists no nodes for cluster ${CLUSTER_NAME}"
+  IFS=',' read -r -a registries <<< "${HTTP_REGISTRIES}"
+  for node in ${nodes}; do
+    for registry in "${registries[@]}"; do
+      dir="/etc/containerd/certs.d/${registry}"
+      docker exec "${node}" mkdir -p "${dir}"
+      printf 'server = "http://%s"\n\n[host."http://%s"]\n  capabilities = ["pull", "resolve"]\n' \
+          "${registry}" "${registry}" \
+        | docker exec -i "${node}" cp /dev/stdin "${dir}/hosts.toml"
+      echo "    ${node}: http://${registry}"
+    done
+  done
 }
 
 # kind ships kindnet with a 50Mi memory limit, below its own ~75MB binary, so the binary's pages are
@@ -359,6 +802,19 @@ print_summary() {
   echo "    Test: curl http://test.${DNS_DOMAIN} (after creating an Ingress)"
 }
 
+print_server_summary() {
+  echo ""
+  echo "==> Cluster is ready!  (topology: ${TOPOLOGY}, server mode)"
+  echo "    API server: ${API_ADDR}:${API_PORT}, certificate SANs requested: localhost, ${API_ADDR}, ${API_SANS//,/, }"
+  echo "      (fixed when the cluster is created; a re-run with other values is refused)"
+  echo "    Ingress VIP: ${INGRESS_VIP}"
+  echo "    Proxy: ${BIND_ADDR}:80/443 -> ${INGRESS_VIP}:80/443 (via socat)"
+  echo "    Not touched in server mode: dnsmasq, host DNS, inotify sysctls (the host's configuration management owns them)"
+  echo ""
+  echo "    Remote kubeconfig: take 'kind get kubeconfig --name ${CLUSTER_NAME}' and set its server to"
+  echo "      https://${API_SANS%%,*}:${API_PORT} or another SAN (README.md, \"Server mode\")"
+}
+
 print_client_summary() {
   echo ""
   echo "==> Client mode ready — no cluster runs here."
@@ -386,6 +842,11 @@ run_client_mode() {
 main() {
   parse_args "$@"
 
+  if [ "${PRINT_CONFIG}" = "1" ]; then
+    render_config
+    return
+  fi
+
   if [ -n "${REMOTE_HOST}" ]; then
     run_client_mode
     return
@@ -393,12 +854,22 @@ main() {
 
   echo "==> Topology: ${TOPOLOGY}  (config: $(basename "${CONFIG_FILE}"))"
   preflight
-  mkdir -p "${SCRIPT_DIR}/data-pool-1" "${SCRIPT_DIR}/data-pool-2"
+  mkdir -p "${KIND_DATA_ROOT}/data-pool-1" "${KIND_DATA_ROOT}/data-pool-2"
   create_network
   create_cluster
   merge_kubeconfig
   size_kindnet
+  if [ "${SERVER_MODE}" = "1" ]; then
+    set_node_restart_policy
+  fi
+  if [ -n "${HTTP_REGISTRIES}" ]; then
+    configure_http_registries
+  fi
   start_proxies
+  if [ "${SERVER_MODE}" = "1" ]; then
+    print_server_summary
+    return
+  fi
   start_dnsmasq
   configure_host_dns
   smoke_check_dns
