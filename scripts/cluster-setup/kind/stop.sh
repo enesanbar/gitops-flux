@@ -12,6 +12,11 @@ SERVER_MODE="${KIND_SERVER:-0}"
 for arg in "$@"; do
   if [ "${arg}" = "--server" ]; then SERVER_MODE=1; fi
 done
+# Anything else would fall through to default mode and remove kind-dnsmasq.
+case "${SERVER_MODE}" in
+  0|1) ;;
+  *) echo "ERROR: KIND_SERVER must be 0 or 1 (got '${SERVER_MODE}')" >&2; exit 2 ;;
+esac
 
 echo "==> Stopping proxy containers"
 docker rm -f proxy-ingress-80 proxy-ingress-443 2>/dev/null || true
