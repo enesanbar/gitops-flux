@@ -4,6 +4,7 @@ set -euo pipefail
 CLUSTER_NAME="local-dind-cluster"
 DOCKER_NETWORK="kind-${CLUSTER_NAME}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KIND_DATA_ROOT="${KIND_DATA_ROOT:-${SCRIPT_DIR}}"  # must match what start.sh used
 
 echo "==> Stopping proxy containers"
 docker rm -f proxy-ingress-80 proxy-ingress-443 2>/dev/null || true
@@ -29,6 +30,6 @@ case "$(uname -s)" in
     echo "      sudo rm /etc/systemd/resolved.conf.d/kindcluster-dev.conf && sudo systemctl reload-or-restart systemd-resolved"
     echo "      sudo rm /etc/sysctl.d/99-kind-inotify.conf"
     echo "    Data pools are kept; pods may have written root-owned files."
-    echo "    To wipe them: sudo rm -rf ${SCRIPT_DIR}/data-pool-*"
+    echo "    To wipe them: sudo rm -rf ${KIND_DATA_ROOT}/data-pool-*"
     ;;
 esac

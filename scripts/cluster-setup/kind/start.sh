@@ -12,7 +12,11 @@ DNS_PORT="15353"
 DNSMASQ_IMAGE="4km3/dnsmasq:2.90-r3"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OS="$(uname -s)"
-export SCRIPT_DIR  # substituted into the config templates (extraMounts hostPath)
+
+# Where the data-pool-{1,2} host dirs live. Next to this script by default; a
+# server keeps them on its data disk instead.
+KIND_DATA_ROOT="${KIND_DATA_ROOT:-${SCRIPT_DIR}}"
+export KIND_DATA_ROOT  # substituted into the config templates (extraMounts hostPath)
 
 # Topology selection. Default: single-node (1 untainted control-plane carrying
 # both storage pools). Use multi for testing scheduling / affinity / drains.
@@ -30,6 +34,10 @@ BIND_ADDR="${KIND_BIND_ADDR:-127.0.0.1}"
 # Used to drive a cluster running on another machine from this laptop.
 REMOTE_HOST="${KIND_REMOTE_HOST:-}"
 
+# --print-config: print the kind config this run would create a cluster from,
+# then exit without touching Docker.
+PRINT_CONFIG=0
+
 parse_args() {
   for arg in "$@"; do
     case "${arg}" in
@@ -37,9 +45,10 @@ parse_args() {
       --remote-host=*)  REMOTE_HOST="${arg#*=}" ;;
       --bind-address=*) BIND_ADDR="${arg#*=}" ;;
       --expose-lan)     BIND_ADDR="0.0.0.0" ;;
+      --print-config)   PRINT_CONFIG=1 ;;
       -h|--help)
         cat <<EOF
-Usage: $(basename "$0") [--topology=single|multi] [--expose-lan | --bind-address=IP]
+Usage: $(basename "$0") [--topology=single|multi] [--expose-lan | --bind-address=IP] [--print-config]
        $(basename "$0") --remote-host=IP
 
 Server profiles (create a cluster on this machine):
@@ -56,11 +65,14 @@ Client mode (no cluster; point *.${DNS_DOMAIN} at a remote cluster):
                         Use this on a laptop to reach a cluster started with
                         --expose-lan on another machine at IP.
 
+  --print-config        print the rendered kind config and exit (no Docker needed)
+
 Env vars:
   KIND_TOPOLOGY=single|multi  alternative to --topology
   KIND_BIND_ADDR=IP           alternative to --bind-address
   KIND_REMOTE_HOST=IP         alternative to --remote-host
   KIND_SKIP_SYSCTL=1          skip the inotify limit adjustment (Linux only)
+  KIND_DATA_ROOT=DIR          absolute dir holding data-pool-{1,2} (default: this script's dir)
 EOF
         exit 0
         ;;
@@ -76,6 +88,11 @@ EOF
     single) CONFIG_FILE="${SCRIPT_DIR}/config.single.yaml" ;;
     multi)  CONFIG_FILE="${SCRIPT_DIR}/config.multi.yaml" ;;
     *) echo "ERROR: unknown topology '${TOPOLOGY}' (expected: single | multi)" >&2; exit 2 ;;
+  esac
+
+  case "${KIND_DATA_ROOT}" in
+    /*) ;;
+    *) echo "ERROR: KIND_DATA_ROOT must be an absolute path (got '${KIND_DATA_ROOT}')" >&2; exit 2 ;;
   esac
 }
 
@@ -173,12 +190,21 @@ create_cluster() {
   if kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}"; then
     echo "    Cluster ${CLUSTER_NAME} already exists, skipping create (delete it first to switch topology)"
   else
-    # envsubst is restricted to ${SCRIPT_DIR} so any other ${...} in the
-    # config passes through to kind untouched.
-    # shellcheck disable=SC2016  # the literal '${SCRIPT_DIR}' is envsubst's filter argument
+    # Rendered to a file first: a render failure inside <(...) would not stop
+    # the script, and kind would then build a default cluster from empty input.
+    RENDERED_CONFIG="$(mktemp)"
+    trap 'rm -f "${RENDERED_CONFIG}"' EXIT
+    render_config > "${RENDERED_CONFIG}"
     KIND_EXPERIMENTAL_DOCKER_NETWORK="${DOCKER_NETWORK}" \
-      kind create cluster --config <(envsubst '${SCRIPT_DIR}' < "${CONFIG_FILE}") --wait 60s
+      kind create cluster --config "${RENDERED_CONFIG}" --wait 60s
   fi
+}
+
+# envsubst is restricted to ${KIND_DATA_ROOT} so any other ${...} in the
+# config passes through to kind untouched.
+render_config() {
+  # shellcheck disable=SC2016  # the literal '${KIND_DATA_ROOT}' is envsubst's filter argument
+  envsubst '${KIND_DATA_ROOT}' < "${CONFIG_FILE}"
 }
 
 # kind ships kindnet with a 50Mi memory limit, below its own ~75MB binary, so the binary's pages are
@@ -391,9 +417,14 @@ main() {
     return
   fi
 
+  if [ "${PRINT_CONFIG}" = "1" ]; then
+    render_config
+    return
+  fi
+
   echo "==> Topology: ${TOPOLOGY}  (config: $(basename "${CONFIG_FILE}"))"
   preflight
-  mkdir -p "${SCRIPT_DIR}/data-pool-1" "${SCRIPT_DIR}/data-pool-2"
+  mkdir -p "${KIND_DATA_ROOT}/data-pool-1" "${KIND_DATA_ROOT}/data-pool-2"
   create_network
   create_cluster
   merge_kubeconfig
