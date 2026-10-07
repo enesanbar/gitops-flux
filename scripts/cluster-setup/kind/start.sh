@@ -123,6 +123,11 @@ EOF
   if [ "${SERVER_MODE}" = "1" ] && [ -n "${REMOTE_HOST}" ]; then
     die "server mode runs a cluster here; --remote-host runs none. Pick one."
   fi
+  # Checked here, before anything runs: client mode would otherwise start
+  # dnsmasq and write host DNS instead of printing.
+  if [ "${PRINT_CONFIG}" = "1" ] && [ -n "${REMOTE_HOST}" ]; then
+    die "--print-config prints the config of a cluster on this host; client mode (--remote-host / KIND_REMOTE_HOST) creates none. Pick one."
+  fi
 
   # Client mode does not create a cluster, so topology/config is irrelevant.
   if [ -n "${REMOTE_HOST}" ]; then
@@ -624,13 +629,13 @@ run_client_mode() {
 main() {
   parse_args "$@"
 
-  if [ -n "${REMOTE_HOST}" ]; then
-    run_client_mode
+  if [ "${PRINT_CONFIG}" = "1" ]; then
+    render_config
     return
   fi
 
-  if [ "${PRINT_CONFIG}" = "1" ]; then
-    render_config
+  if [ -n "${REMOTE_HOST}" ]; then
+    run_client_mode
     return
   fi
 
