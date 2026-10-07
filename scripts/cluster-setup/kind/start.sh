@@ -40,6 +40,10 @@ REMOTE_HOST="${KIND_REMOTE_HOST:-}"
 # then exit without touching Docker.
 PRINT_CONFIG=0
 
+# Where a cluster's creation settings are recorded: inside its control-plane
+# node, so the record is deleted with the cluster. See check_creation_settings.
+SETTINGS_FILE="/etc/gitops-flux/kind-settings"
+
 # Server mode: the cluster runs as a long-lived service on a Linux host that
 # other machines reach over the network, and the host's own configuration
 # management owns dnsmasq, host DNS and sysctls. See README.md, "Server mode".
@@ -234,9 +238,90 @@ preflight() {
     exit 1
   fi
 
+  # Before the first change to the host, so a refused re-run changes nothing.
+  check_creation_settings
+
   if [ "${OS}" = "Linux" ]; then
     ensure_inotify_limits
   fi
+}
+
+# kind bakes the data root, the API endpoint, the SANs and the kubelet settings
+# into a cluster when it creates it. A re-run with other values would only make
+# empty pools under a new root, or leave new kubelet settings unapplied, so it
+# is refused instead.
+#
+# The record is written only when the settings differ from the old defaults
+# (server mode, or another data root). A cluster without one was therefore
+# created in default mode with its pools next to this script, like every
+# cluster made before the record existed; for those, a default run goes ahead
+# as it always has, topology mismatch message included.
+check_creation_settings() {
+  kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}" || return 0
+
+  local recorded wanted note=""
+  wanted="$(creation_settings)"
+  # docker cp also reads a stopped node; stderr is dropped because a missing
+  # record is the normal case for a default cluster.
+  if ! recorded="$(docker cp "${CLUSTER_NAME}-control-plane:${SETTINGS_FILE}" - 2>/dev/null | tar -xOf - 2>/dev/null)"; then
+    needs_settings_record || return 0
+    recorded="$(printf 'server=0\ndata_root=%s' "${SCRIPT_DIR}")"
+    note="(no settings record: it was made with the defaults, possibly by an older start.sh, so its pools are where that start.sh lived, normally here)"
+  elif [ "${recorded}" = "${wanted}" ]; then
+    return 0
+  fi
+  refuse_rerun "${recorded}" "${wanted}" "${note}"
+}
+
+creation_settings() {
+  echo "topology=${TOPOLOGY}"
+  echo "server=${SERVER_MODE}"
+  echo "data_root=${KIND_DATA_ROOT}"
+  if [ "${SERVER_MODE}" = "1" ]; then
+    echo "api_port=${API_PORT}"
+    echo "api_sans=${API_SANS}"
+    echo "system_reserved_memory=${SYSTEM_RESERVED_MEMORY}"
+    echo "eviction_memory_available=${EVICTION_MEMORY_AVAILABLE}"
+    echo "eviction_nodefs_available=${EVICTION_NODEFS_AVAILABLE}"
+  fi
+}
+
+needs_settings_record() {
+  [ "${SERVER_MODE}" = "1" ] || [ "${KIND_DATA_ROOT}" != "${SCRIPT_DIR}" ]
+}
+
+record_creation_settings() {
+  creation_settings | docker exec -i "${CLUSTER_NAME}-control-plane" \
+    sh -c "mkdir -p '$(dirname "${SETTINGS_FILE}")' && cat > '${SETTINGS_FILE}'"
+}
+
+# The stop command comes from the recorded settings, not this run's: stopping a
+# server cluster without KIND_SERVER=1 would remove a kind-dnsmasq it doesn't own.
+refuse_rerun() {
+  local recorded="$1" wanted="$2" note="$3" old_root old_server stop_cmd
+  old_root="$(printf '%s\n' "${recorded}" | sed -n 's/^data_root=//p')"
+  old_server="$(printf '%s\n' "${recorded}" | sed -n 's/^server=//p')"
+  stop_cmd="${SCRIPT_DIR}/stop.sh"
+  if [ "${old_root}" != "${SCRIPT_DIR}" ]; then stop_cmd="KIND_DATA_ROOT=${old_root} ${stop_cmd}"; fi
+  if [ "${old_server}" = "1" ]; then stop_cmd="KIND_SERVER=1 ${stop_cmd}"; fi
+
+  {
+    echo "ERROR: cluster ${CLUSTER_NAME} exists with other creation settings, which a re-run can't change."
+    echo "       Nothing was changed."
+    echo "       The cluster was created with:"
+    printf '%s\n' "${recorded}" | sed 's/^/         /'
+    if [ -n "${note}" ]; then echo "         ${note}"; fi
+    echo "       This run asks for:"
+    printf '%s\n' "${wanted}" | sed 's/^/         /'
+    echo "       To keep the cluster, re-run with the settings it was created with."
+    echo "       To recreate it with the new ones, run: ${stop_cmd}"
+    echo "       and then start.sh again. The data pools stay on disk."
+    if [ "${old_root}" != "${KIND_DATA_ROOT}" ]; then
+      echo "       The data root changes: move data-pool-1 and data-pool-2 from ${old_root}"
+      echo "       to ${KIND_DATA_ROOT} before recreating, or the new cluster starts empty."
+    fi
+  } >&2
+  exit 2
 }
 
 # kind on Linux commonly exhausts the default inotify limits once Flux, ingress
@@ -301,9 +386,6 @@ create_cluster() {
   echo "==> Step 2: Create kind cluster"
   if kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}"; then
     echo "    Cluster ${CLUSTER_NAME} already exists, skipping create (delete it first to switch topology)"
-    if [ "${SERVER_MODE}" = "1" ]; then
-      check_api_published
-    fi
   else
     # Rendered to a file first: a render failure inside <(...) would not stop
     # the script, and kind would then build a default cluster from empty input.
@@ -312,6 +394,9 @@ create_cluster() {
     render_config > "${RENDERED_CONFIG}"
     KIND_EXPERIMENTAL_DOCKER_NETWORK="${DOCKER_NETWORK}" \
       kind create cluster --config "${RENDERED_CONFIG}" --wait 60s
+    if needs_settings_record; then
+      record_creation_settings
+    fi
   fi
 }
 
@@ -360,17 +445,6 @@ render_server_patch() {
   KIND_EVICTION_NODEFS_AVAILABLE="${EVICTION_NODEFS_AVAILABLE}" \
     envsubst '${KIND_CERT_SANS} ${KIND_SYSTEM_RESERVED_MEMORY} ${KIND_EVICTION_MEMORY_AVAILABLE} ${KIND_EVICTION_NODEFS_AVAILABLE}' \
     < "${SCRIPT_DIR}/config.server-patch.yaml"
-}
-
-# A cluster created outside server mode keeps kind's loopback API on a random
-# port; re-running in server mode cannot change that, so say so.
-check_api_published() {
-  local published
-  published="$(docker port "${CLUSTER_NAME}-control-plane" 6443/tcp 2>/dev/null || true)"
-  if ! printf '%s\n' "${published}" | grep -qx "${API_ADDR}:${API_PORT}"; then
-    echo "    WARN: the existing cluster publishes its API on '${published:-nothing}', not ${API_ADDR}:${API_PORT}."
-    echo "          It was not created in server mode with these settings; run stop.sh --server, then start.sh again."
-  fi
 }
 
 # kind creates nodes with restart policy on-failure:1, so a host reboot would
@@ -591,7 +665,7 @@ print_server_summary() {
   echo ""
   echo "==> Cluster is ready!  (topology: ${TOPOLOGY}, server mode)"
   echo "    API server: ${API_ADDR}:${API_PORT}, certificate SANs requested: localhost, ${API_ADDR}, ${API_SANS//,/, }"
-  echo "      (SANs are fixed when the cluster is created; a re-run does not change them)"
+  echo "      (fixed when the cluster is created; a re-run with other values is refused)"
   echo "    Ingress VIP: ${INGRESS_VIP}"
   echo "    Proxy: ${BIND_ADDR}:80/443 -> ${INGRESS_VIP}:80/443 (via socat)"
   echo "    Not touched in server mode: dnsmasq, host DNS, inotify sysctls (the host's configuration management owns them)"

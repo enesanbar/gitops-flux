@@ -256,6 +256,8 @@ KIND_SERVER=1 KIND_DATA_ROOT=/srv/data/kind ./stop.sh   # leaves dnsmasq alone
 
 Give both scripts the same variables, for example from one environment file. Re-running `start.sh` skips the existing cluster and re-applies the restart policy, the registry config, the kindnet sizing and the proxies. `./start.sh --print-config`, with the same variables, prints the kind config a create would use.
 
+kind bakes the topology, data root, API port, SANs and kubelet reserves into the cluster when it creates it, so a re-run can't change them. `start.sh` records them in the control-plane node at `/etc/gitops-flux/kind-settings`, which goes away with the cluster. If a re-run asks for different values, it refuses before it changes anything, shows both sets, and prints the `stop.sh` command that recreates the cluster. A cluster created with the old defaults (no server mode, data pools in this directory) keeps no record and re-runs exactly as before.
+
 ### Variables
 
 | Variable | Default | Effect |
