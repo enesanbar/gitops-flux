@@ -10,6 +10,9 @@ DNS_PORT="15353"
 # Multi-arch (amd64/arm64); jpillora/dnsmasq is amd64-only and would run
 # emulated on Apple Silicon and fail on arm64 Linux.
 DNSMASQ_IMAGE="4km3/dnsmasq:2.90-r3"
+# The ingress proxies. Pinned by the multi-arch index digest (amd64 and arm64
+# among others), so a re-run never picks up a new :latest; the tag is for reading.
+SOCAT_IMAGE="alpine/socat:1.8.1.3@sha256:82ad20f6f6e29b91ff33b6662d24063522b1378f08fd8569cd3ab412cac13f50"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OS="$(uname -s)"
 
@@ -655,14 +658,14 @@ start_proxies() {
     --restart unless-stopped \
     --network "${DOCKER_NETWORK}" \
     -p "${BIND_ADDR}:80:80" \
-    alpine/socat \
+    "${SOCAT_IMAGE}" \
     tcp-listen:80,fork,reuseaddr tcp-connect:"${INGRESS_VIP}":80
 
   docker run -d --name proxy-ingress-443 \
     --restart unless-stopped \
     --network "${DOCKER_NETWORK}" \
     -p "${BIND_ADDR}:443:443" \
-    alpine/socat \
+    "${SOCAT_IMAGE}" \
     tcp-listen:443,fork,reuseaddr tcp-connect:"${INGRESS_VIP}":443
 }
 
