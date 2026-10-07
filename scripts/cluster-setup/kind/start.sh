@@ -50,6 +50,10 @@ SYSTEM_RESERVED_MEMORY="${KIND_SYSTEM_RESERVED_MEMORY:-2Gi}"
 EVICTION_MEMORY_AVAILABLE="${KIND_EVICTION_MEMORY_AVAILABLE:-2Gi}"
 EVICTION_NODEFS_AVAILABLE="${KIND_EVICTION_NODEFS_AVAILABLE:-10%}"
 
+# Plain-HTTP registries the nodes' containerd may pull from, as comma-separated
+# host:port. Works in any mode; a server points this at its own registry.
+HTTP_REGISTRIES="${KIND_HTTP_REGISTRIES:-}"
+
 die() {
   echo "ERROR: $*" >&2
   exit 2
@@ -97,6 +101,7 @@ Env vars:
   KIND_REMOTE_HOST=IP         alternative to --remote-host
   KIND_SKIP_SYSCTL=1          skip the inotify limit adjustment (Linux only)
   KIND_DATA_ROOT=DIR          absolute dir holding data-pool-{1,2} (default: this script's dir)
+  KIND_HTTP_REGISTRIES=h:p,.. let the nodes pull from these registries over plain HTTP
   KIND_SERVER=1               alternative to --server
   KIND_API_SANS=a,b           server mode, required: extra API certificate SANs (names or IPs)
   KIND_API_PORT=6443          server mode: host port for the API server
@@ -132,6 +137,15 @@ EOF
     /*) ;;
     *) echo "ERROR: KIND_DATA_ROOT must be an absolute path (got '${KIND_DATA_ROOT}')" >&2; exit 2 ;;
   esac
+
+  local registry
+  local -a registries
+  HTTP_REGISTRIES="${HTTP_REGISTRIES// /}"
+  IFS=',' read -r -a registries <<< "${HTTP_REGISTRIES}"
+  for registry in "${registries[@]+"${registries[@]}"}"; do
+    [[ "${registry}" =~ ^[A-Za-z0-9.-]+:[0-9]+$ ]] \
+      || die "KIND_HTTP_REGISTRIES: '${registry}' is not host:port"
+  done
 
   if [ "${SERVER_MODE}" = "1" ]; then
     validate_server_mode
@@ -353,6 +367,29 @@ set_node_restart_policy() {
   for node in ${nodes}; do
     docker update --restart unless-stopped "${node}" >/dev/null
     echo "    ${node}: unless-stopped"
+  done
+}
+
+# kind's node images (v0.27+) already point containerd at /etc/containerd/certs.d,
+# so one hosts.toml per registry is all it takes: kind's documented
+# local-registry pattern. containerd reads it at pull time, so nothing restarts.
+# Written on every run because a recreated node starts without it.
+configure_http_registries() {
+  echo "==> Step 3b: Let the kind node(s) pull from plain-HTTP registries"
+  local nodes node registry dir
+  local -a registries
+  nodes="$(kind get nodes --name "${CLUSTER_NAME}")"
+  [ -n "${nodes}" ] || die "kind lists no nodes for cluster ${CLUSTER_NAME}"
+  IFS=',' read -r -a registries <<< "${HTTP_REGISTRIES}"
+  for node in ${nodes}; do
+    for registry in "${registries[@]}"; do
+      dir="/etc/containerd/certs.d/${registry}"
+      docker exec "${node}" mkdir -p "${dir}"
+      printf 'server = "http://%s"\n\n[host."http://%s"]\n  capabilities = ["pull", "resolve"]\n' \
+          "${registry}" "${registry}" \
+        | docker exec -i "${node}" cp /dev/stdin "${dir}/hosts.toml"
+      echo "    ${node}: http://${registry}"
+    done
   done
 }
 
@@ -593,6 +630,9 @@ main() {
   size_kindnet
   if [ "${SERVER_MODE}" = "1" ]; then
     set_node_restart_policy
+  fi
+  if [ -n "${HTTP_REGISTRIES}" ]; then
+    configure_http_registries
   fi
   start_proxies
   if [ "${SERVER_MODE}" = "1" ]; then
