@@ -264,7 +264,11 @@ preflight() {
 #   as before, topology message included; one that looks like a server-mode or
 #   other-root cluster is refused.
 check_existing_cluster() {
-  kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}" || return 0
+  local clusters
+  # Output and status apart: a failed listing is not "no cluster".
+  clusters="$(kind get clusters 2>/dev/null)" \
+    || refuse_unreadable "the list of kind clusters (kind get clusters)"
+  printf '%s\n' "${clusters}" | grep -qx "${CLUSTER_NAME}" || return 0
 
   local nodes
   nodes="$(kind get nodes --name "${CLUSTER_NAME}" 2>/dev/null)" \
