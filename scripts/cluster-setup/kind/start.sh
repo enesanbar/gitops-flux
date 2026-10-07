@@ -14,7 +14,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OS="$(uname -s)"
 
 # Where the data-pool-{1,2} host dirs live. Next to this script by default; a
-# server keeps them on its data disk instead.
+# server keeps them on its data disk instead. An explicit value is validated
+# (validate_data_root) before anything uses it.
+KIND_DATA_ROOT_SET="${KIND_DATA_ROOT:+1}"
 KIND_DATA_ROOT="${KIND_DATA_ROOT:-${SCRIPT_DIR}}"
 export KIND_DATA_ROOT  # substituted into the config templates (extraMounts hostPath)
 
@@ -133,10 +135,9 @@ EOF
     *) echo "ERROR: unknown topology '${TOPOLOGY}' (expected: single | multi)" >&2; exit 2 ;;
   esac
 
-  case "${KIND_DATA_ROOT}" in
-    /*) ;;
-    *) echo "ERROR: KIND_DATA_ROOT must be an absolute path (got '${KIND_DATA_ROOT}')" >&2; exit 2 ;;
-  esac
+  if [ -n "${KIND_DATA_ROOT_SET}" ]; then
+    validate_data_root
+  fi
 
   local registry
   local -a registries
@@ -150,6 +151,18 @@ EOF
   if [ "${SERVER_MODE}" = "1" ]; then
     validate_server_mode
   fi
+}
+
+# The data root lands in an unquoted YAML scalar (extraMounts hostPath), where a
+# '#', a ': ' or a newline would change the config, so an explicit value is held
+# to plain path characters. The default, this script's directory, is left alone:
+# it renders exactly as it always has.
+validate_data_root() {
+  while [ "${KIND_DATA_ROOT}" != "/" ] && [ "${KIND_DATA_ROOT%/}" != "${KIND_DATA_ROOT}" ]; do
+    KIND_DATA_ROOT="${KIND_DATA_ROOT%/}"
+  done
+  [[ "${KIND_DATA_ROOT}" =~ ^(/[A-Za-z0-9._-]+)+$ ]] \
+    || die "KIND_DATA_ROOT must be an absolute path made of letters, digits, '.', '_', '-' and '/' (got '${KIND_DATA_ROOT}')"
 }
 
 # Server-mode values are spliced into YAML, so they are checked against a strict

@@ -267,7 +267,7 @@ Give both scripts the same variables, for example from one environment file. Re-
 | `KIND_EVICTION_MEMORY_AVAILABLE` | `2Gi` | Kubelet `evictionHard` `memory.available`. |
 | `KIND_EVICTION_NODEFS_AVAILABLE` | `10%` | Kubelet `evictionHard` `nodefs.available`. |
 | `KIND_BIND_ADDR` | `127.0.0.1` | Where the socat ingress proxies publish 80/443 (not new). svc uses `0.0.0.0`. |
-| `KIND_DATA_ROOT` | this directory | Any mode: absolute directory holding `data-pool-{1,2}`. svc uses `/srv/data/kind`. |
+| `KIND_DATA_ROOT` | this directory | Any mode: absolute directory holding `data-pool-{1,2}`, made of letters, digits, `.`, `_`, `-` and `/` (it goes into the YAML unquoted). svc uses `/srv/data/kind`. |
 | `KIND_HTTP_REGISTRIES` | none | Any mode: comma-separated `host:port` registries the nodes pull from over plain HTTP. svc uses `192.168.124.20:5000`. |
 
 ### What server mode skips, and why
