@@ -335,6 +335,31 @@ kubectl --kubeconfig ~/.kube/svc.yaml get nodes
 
 The host name in `--server` must be one of `KIND_API_SANS`. Before merging the file into `~/.kube/config`, delete the old local `kind-local-dind-cluster` entries there: where both files use a name, `kubectl config view --flatten` keeps the first one.
 
+### Bootstrapping Flux from the laptop
+
+`bootstrap.sh` runs on the laptop, but three of its steps read key material from local files: `install-{n8n,onyx,pgadmin}-secrets.sh` read `${KIND_DATA_ROOT}/data-pool-1`, and generate whatever is missing. On a server those files sit on the server, next to the data they unlock, and a freshly generated key can't open that data: n8n's stored credentials stay encrypted, and Onyx's Postgres and OpenSearch keep their old passwords. The scripts don't use SSH, so copy just the key files into a private directory laid out like a pool root, and run bootstrap with two variables:
+
+```bash
+# On the laptop, from the gitops-flux checkout. Copy only the key files, never
+# the whole pool: data-pool-1 also holds the databases.
+tmp="$(mktemp -d /tmp/flux-keys.XXXXXX)"   # mode 700, outside the repo
+ssh svc 'sudo tar -C /srv/data/kind -cf - \
+    data-pool-1/n8n-encryption-key \
+    data-pool-1/onyx-secrets \
+    data-pool-1/pgadmin-secrets/admin-password' | tar -C "$tmp" -xf -
+
+KUBECONFIG=~/.kube/svc.yaml KIND_DATA_ROOT="$tmp" REQUIRE_EXISTING_SECRETS=1 \
+  ./scripts/flux/bootstrap.sh       # GITHUB_TOKEN set as usual
+
+rm -rf "$tmp"
+```
+
+- **`KIND_DATA_ROOT`** is the variable `start.sh` uses, with the same default (`scripts/cluster-setup/kind`) and the same check on an explicit value. The scripts read `data-pool-1` under it.
+- **`REQUIRE_EXISTING_SECRETS=1`** stops the scripts from generating anything. If a file is missing or empty, the script names it and exits before it writes a file or touches the cluster. Values other than `0` and `1` are refused.
+- **Without either variable**, the scripts behave as before: they use the pool next to this README and generate missing key material on the first run.
+- **n8n's key adoption is off under the switch.** Without it, `install-n8n-secrets.sh` creates a missing `n8n-encryption-key` from `n8n/config`. If svc has the config but no key file, write the key file on svc from the config's `encryptionKey` first, then copy it.
+- **pgAdmin's closing hint**, `Password: cat …`, points into the copy you just deleted. Read the file on svc instead.
+
 ### Exposure and the firewall
 
 With `KIND_BIND_ADDR=0.0.0.0` in server mode, ports 80, 443 and 6443 listen on every interface, and svc's guest firewall is the filter. Docker publishes these ports through DNAT, so their packets take the forward path, not input. A firewall that only filters input, like plain ufw rules, never sees them: filter them in Docker's `DOCKER-USER` chain or an equivalent forward hook.
