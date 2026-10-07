@@ -36,6 +36,8 @@ case "${1:-}" in
     dir="${AWS_STATE}/tenant/${slot}"
     [ -s "${dir}/access_key_id" ] && [ -s "${dir}/secret_access_key" ] ||
       { echo "No tenant key ${slot} in custody; run experiments/aws/tenant-iam.sh apply first." >&2; exit 1; }
+    # Bootstrap runs this before Flux has created the namespace; Flux adopts it later.
+    ensure_namespace external-secrets
     k -n external-secrets create secret generic aws-credentials \
       --from-file=aws_access_key_id="${dir}/access_key_id" \
       --from-file=aws_secret_access_key="${dir}/secret_access_key" \
