@@ -372,7 +372,7 @@ The host name in `--server` must be one of `KIND_API_SANS`. Before merging the f
 | `external-secrets/aws-credentials` | the `aws-parameterstore` ClusterSecretStore and `ssm-app-secrets` | `aws/tenant/<slot>/` | `aws-credentials.sh tenant <slot>` |
 
 - **`AWS_TENANT_SLOT`** picks the tenant key: unset means `a`, `b` picks the other one, and `none` skips the step. Any other value, empty included, stops bootstrap before it touches the cluster.
-- **A key missing from custody** prints a `Skipped` line naming the command that creates it, and bootstrap carries on. A failed install prints a `WARN` line with the command to re-run, and bootstrap carries on too: Flux comes up either way, and only the AWS-backed stores wait for the Secret.
+- **A key missing from custody** prints a `Skipped` line naming the command that creates it, and bootstrap carries on. A failed install prints a `WARN` line with the command to re-run, and bootstrap carries on too, so Flux comes up either way. On a fresh cluster the AWS-backed stores then wait for the Secret; on an existing one the Secret keeps its previous key (for example slot `a` after a failed switch to `b`) until the re-run succeeds.
 - **Vault's `aws-lab` engine isn't part of bootstrap.** It lives in Vault, so run `scripts/secrets/vault.sh aws` once Vault is unsealed, as before.
 
 ### Exposure and the firewall
