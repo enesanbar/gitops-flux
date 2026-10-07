@@ -144,14 +144,13 @@ EOF
     validate_data_root
   fi
 
-  local registry
-  local -a registries
+  # Lists are matched whole, before anything splits them: read stops at the
+  # first newline, so checking items one by one would silently drop the rest.
+  local registry='[A-Za-z0-9.-]+:[0-9]+'
   HTTP_REGISTRIES="${HTTP_REGISTRIES// /}"
-  IFS=',' read -r -a registries <<< "${HTTP_REGISTRIES}"
-  for registry in "${registries[@]+"${registries[@]}"}"; do
-    [[ "${registry}" =~ ^[A-Za-z0-9.-]+:[0-9]+$ ]] \
-      || die "KIND_HTTP_REGISTRIES: '${registry}' is not host:port"
-  done
+  if [ -n "${HTTP_REGISTRIES}" ] && ! [[ "${HTTP_REGISTRIES}" =~ ^${registry}(,${registry})*$ ]]; then
+    die "KIND_HTTP_REGISTRIES must be host:port entries, comma-separated on one line (got '${HTTP_REGISTRIES}')"
+  fi
 
   if [ "${SERVER_MODE}" = "1" ]; then
     validate_server_mode
@@ -175,16 +174,14 @@ validate_data_root() {
 # started creating nodes.
 validate_server_mode() {
   local quantity='[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?'
-  local san
-  local -a sans
+  local san='[A-Za-z0-9.:-]+'
 
   API_SANS="${API_SANS// /}"
   [ -n "${API_SANS}" ] \
     || die "server mode needs KIND_API_SANS: the names and IPs remote clients use for the API. They are fixed when the cluster is created."
-  IFS=',' read -r -a sans <<< "${API_SANS}"
-  for san in "${sans[@]}"; do
-    [[ "${san}" =~ ^[A-Za-z0-9.:-]+$ ]] || die "KIND_API_SANS: '${san}' is not a host name or IP"
-  done
+  # Matched whole for the same reason as KIND_HTTP_REGISTRIES.
+  [[ "${API_SANS}" =~ ^${san}(,${san})*$ ]] \
+    || die "KIND_API_SANS must be host names or IPs, comma-separated on one line (got '${API_SANS}')"
 
   # No leading zeros: YAML would read 06443 as octal, i.e. port 3363.
   [[ "${API_PORT}" =~ ^[1-9][0-9]{0,4}$ ]] && [ "${API_PORT}" -le 65535 ] \
