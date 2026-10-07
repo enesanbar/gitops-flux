@@ -186,8 +186,9 @@ validate_server_mode() {
     [[ "${san}" =~ ^[A-Za-z0-9.:-]+$ ]] || die "KIND_API_SANS: '${san}' is not a host name or IP"
   done
 
-  [[ "${API_PORT}" =~ ^[0-9]+$ ]] && [ "${API_PORT}" -ge 1 ] && [ "${API_PORT}" -le 65535 ] \
-    || die "KIND_API_PORT must be a port number (got '${API_PORT}')"
+  # No leading zeros: YAML would read 06443 as octal, i.e. port 3363.
+  [[ "${API_PORT}" =~ ^[1-9][0-9]{0,4}$ ]] && [ "${API_PORT}" -le 65535 ] \
+    || die "KIND_API_PORT must be a port number from 1 to 65535 without leading zeros (got '${API_PORT}')"
   [[ "${SYSTEM_RESERVED_MEMORY}" =~ ^${quantity}$ ]] \
     || die "KIND_SYSTEM_RESERVED_MEMORY must be a quantity like 2Gi (got '${SYSTEM_RESERVED_MEMORY}')"
   [[ "${EVICTION_MEMORY_AVAILABLE}" =~ ^(${quantity}|[0-9]+(\.[0-9]+)?%)$ ]] \
