@@ -256,7 +256,12 @@ KIND_SERVER=1 KIND_DATA_ROOT=/srv/data/kind ./stop.sh   # leaves dnsmasq alone
 
 Give both scripts the same variables, for example from one environment file. Re-running `start.sh` skips the existing cluster and re-applies the restart policy, the registry config, the kindnet sizing and the proxies. `./start.sh --print-config`, with the same variables, prints the kind config a create would use.
 
-kind bakes the topology, data root, API port, SANs and kubelet reserves into the cluster when it creates it, so a re-run can't change them. `start.sh` records them in the control-plane node at `/etc/gitops-flux/kind-settings`, which goes away with the cluster. If a re-run asks for different values, it refuses before it changes anything, shows both sets, and prints the `stop.sh` command that recreates the cluster. A cluster created with the old defaults (no server mode, data pools in this directory) keeps no record and re-runs exactly as before.
+kind bakes the topology, data root, API port, SANs and kubelet reserves into the cluster when it creates it, so a re-run can't change them. Before it changes anything, `start.sh` reads them back from the existing node containers and refuses a re-run that asks for something else:
+
+- **What it reads:** the topology from `kind get nodes`; the data root and the API binding from `docker inspect`; the SANs from `/kind/kubeadm.conf` and the reserves from `/var/lib/kubelet/config.yaml`, both with `docker cp`, which also works on a stopped node.
+- **Server mode** compares all of it, and anything it can't read refuses too. The one exception is a cluster whose control-plane node is missing or has no CNI config (`/etc/cni/net.d/10-kindnet.conflist`): kind never finished creating it, so no workload ever ran, and Step 2 deletes it and creates it again. An interrupt or `TERM` during a server-mode create deletes the partial cluster on the way out.
+- **Default mode** only checks the container config. A cluster that looks like a default one (API on `127.0.0.1`, data pools in `KIND_DATA_ROOT`) re-runs exactly as before. One that looks like a server-mode or other-root cluster is refused, with the variables to set.
+- **The recreate command** it prints follows the node's actual API binding, so a server-mode cluster always gets `KIND_SERVER=1 ./stop.sh`, which leaves `kind-dnsmasq` alone. When the binding can't be read, it suggests `kind delete cluster` instead.
 
 ### Variables
 

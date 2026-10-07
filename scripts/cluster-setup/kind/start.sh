@@ -40,9 +40,16 @@ REMOTE_HOST="${KIND_REMOTE_HOST:-}"
 # then exit without touching Docker.
 PRINT_CONFIG=0
 
-# Where a cluster's creation settings are recorded: inside its control-plane
-# node, so the record is deleted with the cluster. See check_creation_settings.
-SETTINGS_FILE="/etc/gitops-flux/kind-settings"
+# What the existing cluster's node containers actually have; filled in by
+# check_existing_cluster.
+CP_NODE="${CLUSTER_NAME}-control-plane"
+HAVE_TOPOLOGY=""
+HAVE_API=""
+HAVE_POOLS=""
+HAVE_ROOT=""
+# Set when an interrupted server-mode create left nodes behind: create_cluster
+# deletes them and creates the cluster again.
+LEFTOVER=0
 
 # Server mode: the cluster runs as a long-lived service on a Linux host that
 # other machines reach over the network, and the host's own configuration
@@ -239,89 +246,232 @@ preflight() {
   fi
 
   # Before the first change to the host, so a refused re-run changes nothing.
-  check_creation_settings
+  check_existing_cluster
 
   if [ "${OS}" = "Linux" ]; then
     ensure_inotify_limits
   fi
 }
 
-# kind bakes the data root, the API endpoint, the SANs and the kubelet settings
-# into a cluster when it creates it. A re-run with other values would only make
-# empty pools under a new root, or leave new kubelet settings unapplied, so it
-# is refused instead.
+# kind bakes the topology, data root, API endpoint, SANs and kubelet settings
+# into a cluster when it creates it, so a re-run can't change them. They are
+# read back from the node containers, which can't be missing or stale the way
+# a record could, and a re-run that asks for something else is refused.
 #
-# The record is written only when the settings differ from the old defaults
-# (server mode, or another data root). A cluster without one was therefore
-# created in default mode with its pools next to this script, like every
-# cluster made before the record existed; for those, a default run goes ahead
-# as it always has, topology mismatch message included.
-check_creation_settings() {
+# - Server mode compares everything, and anything it can't read refuses.
+# - Default mode only reads the container config. A cluster that looks like a
+#   default one (API on 127.0.0.1, pools in KIND_DATA_ROOT) goes ahead exactly
+#   as before, topology message included; one that looks like a server-mode or
+#   other-root cluster is refused.
+check_existing_cluster() {
   kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}" || return 0
 
-  local recorded wanted note=""
-  wanted="$(creation_settings)"
-  # docker cp also reads a stopped node; stderr is dropped because a missing
-  # record is the normal case for a default cluster.
-  if ! recorded="$(docker cp "${CLUSTER_NAME}-control-plane:${SETTINGS_FILE}" - 2>/dev/null | tar -xOf - 2>/dev/null)"; then
-    needs_settings_record || return 0
-    recorded="$(printf 'server=0\ndata_root=%s' "${SCRIPT_DIR}")"
-    note="(no settings record: it was made with the defaults, possibly by an older start.sh, so its pools are where that start.sh lived, normally here)"
-  elif [ "${recorded}" = "${wanted}" ]; then
+  local nodes
+  nodes="$(kind get nodes --name "${CLUSTER_NAME}" 2>/dev/null)" \
+    || refuse_unreadable "the node list of cluster ${CLUSTER_NAME} (kind get nodes)"
+  if ! printf '%s\n' "${nodes}" | grep -qx "${CP_NODE}"; then
+    # No control plane means no etcd, so nothing to keep: an interrupted create.
+    if [ "${SERVER_MODE}" = "1" ]; then
+      note_leftover "${CP_NODE} is missing"
+    fi
     return 0
   fi
-  refuse_rerun "${recorded}" "${wanted}" "${note}"
-}
 
-creation_settings() {
-  echo "topology=${TOPOLOGY}"
-  echo "server=${SERVER_MODE}"
-  echo "data_root=${KIND_DATA_ROOT}"
+  read_container_facts "${nodes}"
   if [ "${SERVER_MODE}" = "1" ]; then
-    echo "api_port=${API_PORT}"
-    echo "api_sans=${API_SANS}"
-    echo "system_reserved_memory=${SYSTEM_RESERVED_MEMORY}"
-    echo "eviction_memory_available=${EVICTION_MEMORY_AVAILABLE}"
-    echo "eviction_nodefs_available=${EVICTION_NODEFS_AVAILABLE}"
+    check_server_cluster
+  else
+    check_default_cluster
   fi
 }
 
-needs_settings_record() {
-  [ "${SERVER_MODE}" = "1" ] || [ "${KIND_DATA_ROOT}" != "${SCRIPT_DIR}" ]
+# Port bindings and mounts exist from the moment kind creates a node, and
+# docker inspect reads them whether the node runs or not.
+read_container_facts() {
+  local nodes="$1" node mounts all=""
+  HAVE_TOPOLOGY="$(topology_of "${nodes}")"
+  HAVE_API="$(docker inspect -f '{{range $port, $binds := .HostConfig.PortBindings}}{{if eq $port "6443/tcp"}}{{range $binds}}{{.HostIp}}:{{.HostPort}}{{end}}{{end}}{{end}}' "${CP_NODE}" 2>/dev/null)" \
+    || refuse_unreadable "the API port binding of ${CP_NODE} (docker inspect)"
+  for node in ${nodes}; do
+    mounts="$(docker inspect -f '{{range .Mounts}}{{.Destination}}={{.Source}}{{println}}{{end}}' "${node}" 2>/dev/null)" \
+      || refuse_unreadable "the mounts of ${node} (docker inspect)"
+    all="${all}${mounts}"$'\n'
+  done
+  HAVE_POOLS="$(printf '%s' "${all}" | grep -E '^/mnt/data-pool-[12]=' || true)"
+  HAVE_ROOT="$(printf '%s\n' "${HAVE_POOLS}" | sed -n 's#^/mnt/data-pool-\([12]\)=\(.*\)/data-pool-\1$#\2#p' | head -n 1)"
 }
 
-record_creation_settings() {
-  creation_settings | docker exec -i "${CLUSTER_NAME}-control-plane" \
-    sh -c "mkdir -p '$(dirname "${SETTINGS_FILE}")' && cat > '${SETTINGS_FILE}'"
+topology_of() {
+  case "$(printf '%s\n' "$1" | sort | paste -sd ' ' -)" in
+    "${CP_NODE}") echo single ;;
+    "${CP_NODE} ${CLUSTER_NAME}-worker ${CLUSTER_NAME}-worker2") echo multi ;;
+    *) echo "other ($(printf '%s\n' "$1" | wc -l | tr -d ' ') nodes)" ;;
+  esac
 }
 
-# The stop command comes from the recorded settings, not this run's: stopping a
-# server cluster without KIND_SERVER=1 would remove a kind-dnsmasq it doesn't own.
-refuse_rerun() {
-  local recorded="$1" wanted="$2" note="$3" old_root old_server stop_cmd
-  old_root="$(printf '%s\n' "${recorded}" | sed -n 's/^data_root=//p')"
-  old_server="$(printf '%s\n' "${recorded}" | sed -n 's/^server=//p')"
-  stop_cmd="${SCRIPT_DIR}/stop.sh"
-  if [ "${old_root}" != "${SCRIPT_DIR}" ]; then stop_cmd="KIND_DATA_ROOT=${old_root} ${stop_cmd}"; fi
-  if [ "${old_server}" = "1" ]; then stop_cmd="KIND_SERVER=1 ${stop_cmd}"; fi
+# Returns 0 if every pool is mounted from $1, 1 if one isn't, 2 if none is mounted.
+pools_from() {
+  local root="$1" line found=2
+  while IFS= read -r line; do
+    [ -n "${line}" ] || continue
+    found=0
+    pool_source_is "${line#*=}" "${root}/data-pool-${line:15:1}" || return 1
+  done <<< "${HAVE_POOLS}"
+  return "${found}"
+}
 
+# Docker Desktop may report a macOS bind source under /host_mnt, and a source
+# reached through a symlink is the same directory, so both count as a match.
+pool_source_is() {
+  [ "$1" = "$2" ] || [ "$1" = "/host_mnt$2" ] || { [ -e "$1" ] && [ "$1" -ef "$2" ]; }
+}
+
+check_default_cluster() {
+  local pools=0
+  case "${HAVE_API}" in
+    127.0.0.1:*) ;;
+    *) refuse_mismatch "api: cluster has '${HAVE_API:-no binding}', a default run expects 127.0.0.1 (kind's default)" \
+         "It looks like a server-mode cluster: run start.sh with the server environment it was created with (KIND_SERVER=1 ...)." ;;
+  esac
+  pools_from "${KIND_DATA_ROOT}" || pools=$?
+  if [ "${pools}" = "1" ]; then
+    refuse_mismatch "data_root: cluster has '${HAVE_ROOT}', this run asks for '${KIND_DATA_ROOT}'" \
+      "Its data pools are elsewhere: run start.sh with KIND_DATA_ROOT=${HAVE_ROOT}."
+  fi
+}
+
+check_server_cluster() {
+  local kubelet kubeadm status=0 mismatches
+  local have_sans want_sans have_reserved have_evict_mem have_evict_nodefs
+
+  # The container config first: a cluster made differently (in default mode,
+  # say) is refused for that, not for whatever its files lack.
+  mismatches="$(compare_container_facts)"
+  [ -z "${mismatches}" ] || refuse_mismatch "${mismatches}"
+
+  # kindnet writes its CNI config once kind's create has got through kubeadm
+  # and the CNI install. Without it there was never a pod network, so no
+  # workload ever ran and nothing can be lost: the node is the leftover of an
+  # interrupted create.
+  read_node_file /etc/cni/net.d/10-kindnet.conflist >/dev/null || status=$?
+  case "${status}" in
+    0) ;;
+    3)
+      note_leftover "${CP_NODE} has no CNI config, so kind never finished creating it"
+      return 0
+      ;;
+    *) refuse_unreadable "/etc/cni/net.d/10-kindnet.conflist in ${CP_NODE}" ;;
+  esac
+  kubelet="$(read_node_file /var/lib/kubelet/config.yaml)" \
+    || refuse_unreadable "/var/lib/kubelet/config.yaml in ${CP_NODE}"
+  kubeadm="$(read_node_file /kind/kubeadm.conf)" \
+    || refuse_unreadable "/kind/kubeadm.conf in ${CP_NODE}"
+
+  have_sans="$(printf '%s\n' "${kubeadm}" | awk '
+    /^  certSANs:/ { inside = 1; next }
+    inside && /^  - / { v = $2; gsub(/"/, "", v); print v; next }
+    inside { exit }' | sort -u | paste -sd , -)"
+  have_reserved="$(yaml_value "${kubelet}" systemReserved memory)"
+  have_evict_mem="$(yaml_value "${kubelet}" evictionHard memory.available)"
+  have_evict_nodefs="$(yaml_value "${kubelet}" evictionHard nodefs.available)"
+  [ -n "${have_sans}" ] \
+    || refuse_unreadable "apiServer.certSANs in /kind/kubeadm.conf of ${CP_NODE}"
+  [ -n "${have_reserved}" ] && [ -n "${have_evict_mem}" ] && [ -n "${have_evict_nodefs}" ] \
+    || refuse_unreadable "systemReserved and evictionHard in /var/lib/kubelet/config.yaml of ${CP_NODE}"
+  want_sans="$({ printf '%s\n' localhost "${API_ADDR}"; printf '%s\n' "${API_SANS}" | tr ',' '\n'; } | sort -u | paste -sd , -)"
+
+  mismatches="$(
+    mismatch_line api_sans "${have_sans}" "${want_sans}"
+    mismatch_line system_reserved_memory "${have_reserved}" "${SYSTEM_RESERVED_MEMORY}"
+    mismatch_line eviction_memory_available "${have_evict_mem}" "${EVICTION_MEMORY_AVAILABLE}"
+    mismatch_line eviction_nodefs_available "${have_evict_nodefs}" "${EVICTION_NODEFS_AVAILABLE}"
+  )"
+  [ -z "${mismatches}" ] || refuse_mismatch "${mismatches}"
+}
+
+compare_container_facts() {
+  mismatch_line topology "${HAVE_TOPOLOGY}" "${TOPOLOGY}"
+  mismatch_line api "${HAVE_API:-no binding}" "${API_ADDR}:${API_PORT}"
+  pools_from "${KIND_DATA_ROOT}" \
+    || echo "data_root: cluster has '${HAVE_ROOT:-no pools}', this run asks for '${KIND_DATA_ROOT}'"
+}
+
+mismatch_line() {
+  [ "$2" = "$3" ] || echo "$1: cluster has '$2', this run asks for '$3'"
+}
+
+# docker cp reads a stopped node too. Returns 3 when the file doesn't exist and
+# 1 for any other failure.
+read_node_file() {
+  local err
+  if err="$(docker cp "${CP_NODE}:$1" - 2>&1 >/dev/null)"; then
+    docker cp "${CP_NODE}:$1" - 2>/dev/null | tar -xOf - 2>/dev/null
+    return
+  fi
+  case "${err}" in
+    *"Could not find the file"*) return 3 ;;
+    *) return 1 ;;
+  esac
+}
+
+# "<section>:" then "  <key>: <value>": the block style kubeadm writes.
+yaml_value() {
+  printf '%s\n' "$1" | awk -v section="$2:" -v key="$3:" '
+    $0 == section { inside = 1; next }
+    inside && /^[^ ]/ { inside = 0 }
+    inside && $1 == key { v = $2; gsub(/"/, "", v); print v; exit }'
+}
+
+note_leftover() {
+  echo "    Found the leftover of an interrupted create ($1): Step 2 deletes it and creates the cluster again."
+  LEFTOVER=1
+}
+
+refuse_mismatch() {
   {
-    echo "ERROR: cluster ${CLUSTER_NAME} exists with other creation settings, which a re-run can't change."
-    echo "       Nothing was changed."
-    echo "       The cluster was created with:"
-    printf '%s\n' "${recorded}" | sed 's/^/         /'
-    if [ -n "${note}" ]; then echo "         ${note}"; fi
-    echo "       This run asks for:"
-    printf '%s\n' "${wanted}" | sed 's/^/         /'
-    echo "       To keep the cluster, re-run with the settings it was created with."
-    echo "       To recreate it with the new ones, run: ${stop_cmd}"
-    echo "       and then start.sh again. The data pools stay on disk."
-    if [ "${old_root}" != "${KIND_DATA_ROOT}" ]; then
-      echo "       The data root changes: move data-pool-1 and data-pool-2 from ${old_root}"
-      echo "       to ${KIND_DATA_ROOT} before recreating, or the new cluster starts empty."
-    fi
+    echo "ERROR: cluster ${CLUSTER_NAME} exists with settings a re-run can't change. Nothing was changed."
+    printf '%s\n' "$1" | sed 's/^/         /'
+    if [ -n "${2:-}" ]; then echo "       $2"; fi
+    recreate_hint
   } >&2
   exit 2
+}
+
+refuse_unreadable() {
+  {
+    echo "ERROR: couldn't read $1, so the existing cluster ${CLUSTER_NAME}"
+    echo "       can't be checked against this run's settings. Nothing was changed."
+    recreate_hint
+  } >&2
+  exit 2
+}
+
+# The stop command follows the node's actual API binding, never this run's
+# mode: stop.sh outside server mode removes kind-dnsmasq, which a server's
+# configuration management owns.
+recreate_hint() {
+  local stop_cmd="${SCRIPT_DIR}/stop.sh"
+  case "${HAVE_API}" in
+    127.0.0.1:*) ;;
+    ?*) stop_cmd="KIND_SERVER=1 ${stop_cmd}" ;;
+    *)
+      echo "       Its API binding is unknown, so it can't be told whether this is a server-mode cluster,"
+      echo "       and stop.sh in the wrong mode would remove kind-dnsmasq. To recreate it, delete only the cluster:"
+      echo "         kind delete cluster --name ${CLUSTER_NAME}"
+      echo "       then run start.sh again. The data pools stay on disk."
+      return 0
+      ;;
+  esac
+  if [ -n "${HAVE_ROOT}" ] && [ "${HAVE_ROOT}" != "${SCRIPT_DIR}" ]; then
+    stop_cmd="KIND_DATA_ROOT=${HAVE_ROOT} ${stop_cmd}"
+  fi
+  echo "       To keep the cluster, re-run with the settings it has."
+  echo "       To recreate it with this run's settings: ${stop_cmd}"
+  echo "       then start.sh again. The data pools stay on disk."
+  if [ -n "${HAVE_ROOT}" ] && ! pools_from "${KIND_DATA_ROOT}"; then
+    echo "       The data root changes: move data-pool-1 and data-pool-2 from ${HAVE_ROOT}"
+    echo "       to ${KIND_DATA_ROOT} first, or the new cluster starts empty."
+  fi
 }
 
 # kind on Linux commonly exhausts the default inotify limits once Flux, ingress
@@ -384,6 +534,10 @@ create_network() {
 
 create_cluster() {
   echo "==> Step 2: Create kind cluster"
+  if [ "${LEFTOVER}" = "1" ]; then
+    echo "    Deleting the leftover of an interrupted create"
+    kind delete cluster --name "${CLUSTER_NAME}"
+  fi
   if kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}"; then
     echo "    Cluster ${CLUSTER_NAME} already exists, skipping create (delete it first to switch topology)"
   else
@@ -392,10 +546,15 @@ create_cluster() {
     RENDERED_CONFIG="$(mktemp)"
     trap 'rm -f "${RENDERED_CONFIG}"' EXIT
     render_config > "${RENDERED_CONFIG}"
+    if [ "${SERVER_MODE}" = "1" ]; then
+      # kind leaves its nodes behind when it is killed; take them down so an
+      # identical retry starts clean.
+      trap 'trap - INT TERM; kind delete cluster --name "${CLUSTER_NAME}" >/dev/null 2>&1 || true; exit 130' INT TERM
+    fi
     KIND_EXPERIMENTAL_DOCKER_NETWORK="${DOCKER_NETWORK}" \
       kind create cluster --config "${RENDERED_CONFIG}" --wait 60s
-    if needs_settings_record; then
-      record_creation_settings
+    if [ "${SERVER_MODE}" = "1" ]; then
+      trap - INT TERM
     fi
   fi
 }
