@@ -340,22 +340,26 @@ The host name in `--server` must be one of `KIND_API_SANS`. Before merging the f
 `bootstrap.sh` runs on the laptop, but three of its steps read key material from local files: `install-{n8n,onyx,pgadmin}-secrets.sh` read `${KIND_DATA_ROOT}/data-pool-1`, and generate whatever is missing. On a server those files sit on the server, next to the data they unlock, and a freshly generated key can't open that data: n8n's stored credentials stay encrypted, and Onyx's Postgres and OpenSearch keep their old passwords. The scripts don't use SSH, so copy just the key files into a private directory laid out like a pool root, and run bootstrap with two variables:
 
 ```bash
-# On the laptop, from the gitops-flux checkout. Copy only the key files, never
-# the whole pool: data-pool-1 also holds the databases.
-tmp="$(mktemp -d /tmp/flux-keys.XXXXXX)"   # mode 700, outside the repo
-ssh svc 'sudo tar -C /srv/data/kind -cf - \
-    data-pool-1/n8n-encryption-key \
-    data-pool-1/onyx-secrets \
-    data-pool-1/pgadmin-secrets/admin-password' | tar -C "$tmp" -xf -
-
-KUBECONFIG=~/.kube/svc.yaml KIND_DATA_ROOT="$tmp" REQUIRE_EXISTING_SECRETS=1 \
-  ./scripts/flux/bootstrap.sh       # GITHUB_TOKEN set as usual
-
-rm -rf "$tmp"
+# On the laptop, from the gitops-flux checkout, in bash or zsh. The subshell stops
+# at the first failure and always deletes the copy. Copy only the key files,
+# never the whole pool: data-pool-1 also holds the databases.
+(
+  set -euo pipefail
+  tmp="$(mktemp -d /tmp/flux-keys.XXXXXX)"   # mode 700, outside the repo
+  trap 'rm -rf "$tmp"' EXIT
+  ssh svc 'sudo tar -C /srv/data/kind -cf - \
+      data-pool-1/n8n-encryption-key \
+      data-pool-1/onyx-secrets \
+      data-pool-1/pgadmin-secrets/admin-password' | tar -C "$tmp" -xf -
+  [ -n "$(ls -A "$tmp")" ] || { echo "no key files copied" >&2; exit 1; }
+  KUBECONFIG=~/.kube/svc.yaml KIND_DATA_ROOT="$tmp" REQUIRE_EXISTING_SECRETS=1 \
+    ./scripts/flux/bootstrap.sh       # GITHUB_TOKEN set as usual
+)
 ```
 
-- **`KIND_DATA_ROOT`** is the variable `start.sh` uses, with the same default (`scripts/cluster-setup/kind`) and the same check on an explicit value. The scripts read `data-pool-1` under it.
-- **`REQUIRE_EXISTING_SECRETS=1`** stops the scripts from generating anything. If a file is missing or empty, the script names it and exits before it writes a file or touches the cluster. Values other than `0` and `1` are refused.
+- **`KIND_DATA_ROOT`** is the variable `start.sh` uses, with the same default while it's unset (`scripts/cluster-setup/kind`) and the same check on a set value. The scripts read `data-pool-1` under it. Unlike `start.sh`, they refuse a set but empty value, so an empty variable can't fall back to the laptop's own pool.
+- **`REQUIRE_EXISTING_SECRETS=1`** stops the scripts from generating anything. If a file is missing or empty, the script names it and exits before it writes a file or touches the cluster. Unset means `0`; any other value, empty included, is refused.
+- **`bootstrap.sh` checks first.** Before it switches context or touches the cluster, it applies the same rules to both variables, and with the switch on it requires all six key files. The installers still check for themselves when run standalone.
 - **Without either variable**, the scripts behave as before: they use the pool next to this README and generate missing key material on the first run.
 - **n8n's key adoption is off under the switch.** Without it, `install-n8n-secrets.sh` creates a missing `n8n-encryption-key` from `n8n/config`. If svc has the config but no key file, write the key file on svc from the config's `encryptionKey` first, then copy it.
 - **pgAdmin's closing hint**, `Password: cat …`, points into the copy you just deleted. Read the file on svc instead.
