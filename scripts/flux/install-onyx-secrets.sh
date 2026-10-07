@@ -12,12 +12,60 @@ set -euo pipefail
 # changes. Wiping the pool removes both the data and the values.
 #
 # Usage: install-onyx-secrets.sh [kube-context]
+# Env:   KIND_DATA_ROOT   absolute dir holding data-pool-1, as for start.sh
+#                         (default: scripts/cluster-setup/kind)
+#        REQUIRE_EXISTING_SECRETS=1  never generate key material; a missing
+#                         file stops the run before anything is written
 
 KUBE_CONTEXT_NAME="${1:-kind-local-dind-cluster}"
 NAMESPACE="onyx"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SECRETS_DIR="${SCRIPT_DIR}/../cluster-setup/kind/data-pool-1/onyx-secrets"
+
+# The pool root, as in start.sh: next to the kind scripts by default, or
+# KIND_DATA_ROOT, which is validated only when set so the default is untouched.
+KIND_DATA_ROOT_SET="${KIND_DATA_ROOT:+1}"
+KIND_DATA_ROOT="${KIND_DATA_ROOT:-${SCRIPT_DIR}/../cluster-setup/kind}"
+if [ -n "${KIND_DATA_ROOT_SET}" ]; then
+  while [ "${KIND_DATA_ROOT}" != "/" ] && [ "${KIND_DATA_ROOT%/}" != "${KIND_DATA_ROOT}" ]; do
+    KIND_DATA_ROOT="${KIND_DATA_ROOT%/}"
+  done
+  if ! [[ "${KIND_DATA_ROOT}" =~ ^(/[A-Za-z0-9._-]+)+$ ]]; then
+    echo "ERROR: KIND_DATA_ROOT must be an absolute path made of letters, digits, '.', '_', '-' and '/' (got '${KIND_DATA_ROOT}')" >&2
+    exit 1
+  fi
+fi
+POOL_DIR="${KIND_DATA_ROOT}/data-pool-1"
+
+# REQUIRE_EXISTING_SECRETS=1 forbids generating key material: fresh keys would
+# not open data that already exists, so a missing file is a hard stop. Any
+# other value is refused rather than read as "off".
+case "${REQUIRE_EXISTING_SECRETS:-0}" in
+  0 | 1) ;;
+  *)
+    echo "ERROR: REQUIRE_EXISTING_SECRETS must be 0 or 1 (got '${REQUIRE_EXISTING_SECRETS}')" >&2
+    exit 1
+    ;;
+esac
+
+# require_existing <file>...: with REQUIRE_EXISTING_SECRETS=1, exits before
+# anything is written unless every file exists and is non-empty.
+require_existing() {
+  [ "${REQUIRE_EXISTING_SECRETS:-0}" = 1 ] || return 0
+  local file missing=0
+  for file in "$@"; do
+    if [ ! -s "${file}" ]; then
+      echo "ERROR: ${file} is missing or empty, and REQUIRE_EXISTING_SECRETS=1 forbids generating it" >&2
+      missing=1
+    fi
+  done
+  if [ "${missing}" -ne 0 ]; then
+    echo "       Copy the existing key material into ${POOL_DIR} first. Nothing was changed." >&2
+    exit 1
+  fi
+}
+
+SECRETS_DIR="${POOL_DIR}/onyx-secrets"
 
 for cmd in kubectl openssl; do
   if ! command -v "${cmd}" >/dev/null 2>&1; then
@@ -37,6 +85,8 @@ ensure_value() {
   fi
 }
 
+require_existing "${SECRETS_DIR}/postgres-password" "${SECRETS_DIR}/opensearch-admin-password" \
+  "${SECRETS_DIR}/redis-password" "${SECRETS_DIR}/user-auth-secret"
 mkdir -p "${SECRETS_DIR}"
 ensure_value postgres-password "$(openssl rand -hex 24)"
 # OpenSearch rejects passwords without upper, lower, digit and special
