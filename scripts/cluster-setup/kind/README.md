@@ -58,6 +58,8 @@ This removes the cluster, proxy containers, dnsmasq, and the Docker network. Hos
 
 The `data-pool-*` directories are kept so PV data survives cluster recreations. On Linux, pods write into them with container UIDs, so wiping them needs `sudo rm -rf data-pool-*`.
 
+In [server mode](#server-mode), `stop.sh` also leaves `kind-dnsmasq` running, and there is no host DNS or sysctl file of its own to remove.
+
 ## How It Works
 
 When you visit `grafana.kindcluster.dev` in your browser, the request passes through five components before reaching the pod.
@@ -237,6 +239,110 @@ sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keyc
 
 This *adds* trust for the server's CA without touching your laptop's own mkcert CA. Restart the browser afterward. The CA rarely changes, so this is a one-time step per server (only redo it if the server re-runs `mkcert -install`).
 
+## Server mode
+
+For a cluster that runs as a long-lived service on a Linux server, such as a VM whose own configuration management owns DNS and kernel settings, while a laptop's kubectl and browser reach it over the network. Copy this directory to the server; it needs no git checkout and no GitHub credentials there.
+
+```bash
+KIND_SERVER=1 \
+KIND_DATA_ROOT=/srv/data/kind \
+KIND_API_SANS=100.64.0.10,svc.example.ts.net \
+KIND_BIND_ADDR=0.0.0.0 \
+KIND_HTTP_REGISTRIES=192.168.124.20:5000 \
+  ./start.sh
+
+KIND_SERVER=1 KIND_DATA_ROOT=/srv/data/kind ./stop.sh   # leaves dnsmasq alone
+```
+
+Give both scripts the same variables, for example from one environment file. Re-running `start.sh` skips the existing cluster and re-applies the restart policy, the registry config, the kindnet sizing and the proxies. `./start.sh --print-config`, with the same variables, prints the kind config a create would use.
+
+### Variables
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `KIND_SERVER=1` or `--server` | `0` | Turns server mode on, for `start.sh` and `stop.sh`. |
+| `KIND_API_SANS` | required | Comma-separated names and IPs that remote clients use for the API. They join kind's own `localhost` and `0.0.0.0` in the API server certificate, and are fixed when the cluster is created. |
+| `KIND_API_PORT` | `6443` | Host port of the API server, bound to `0.0.0.0`. |
+| `KIND_SYSTEM_RESERVED_MEMORY` | `2Gi` | Kubelet `systemReserved.memory`. |
+| `KIND_EVICTION_MEMORY_AVAILABLE` | `2Gi` | Kubelet `evictionHard` `memory.available`. |
+| `KIND_EVICTION_NODEFS_AVAILABLE` | `10%` | Kubelet `evictionHard` `nodefs.available`. |
+| `KIND_BIND_ADDR` | `127.0.0.1` | Where the socat ingress proxies publish 80/443 (not new). svc uses `0.0.0.0`. |
+| `KIND_DATA_ROOT` | this directory | Any mode: absolute directory holding `data-pool-{1,2}`. svc uses `/srv/data/kind`. |
+| `KIND_HTTP_REGISTRIES` | none | Any mode: comma-separated `host:port` registries the nodes pull from over plain HTTP. svc uses `192.168.124.20:5000`. |
+
+### What server mode skips, and why
+
+On a managed server, the host plumbing `start.sh` normally does belongs to the server's configuration management, and two owners of one file or container fight. So in server mode `start.sh` never runs `sudo`, and:
+
+- it doesn't create, remove or replace the `kind-dnsmasq` container, and `stop.sh` doesn't remove it;
+- it doesn't write `/etc/systemd/resolved.conf.d/*` or run the DNS smoke check;
+- it doesn't write `/etc/sysctl.d/*`. It only warns if the inotify limits are below kind's recommendation (524288 watches, 512 instances).
+
+It still owns the cluster, its Docker network and the socat proxies.
+
+### How the config is built
+
+kind can't make YAML sections conditional, and server copies of `config.single.yaml` and `config.multi.yaml` would be four files drifting apart. So server mode extends the topology config: it inserts `apiServerAddress: "0.0.0.0"` and `apiServerPort` into the `networking:` block, then appends `config.server-patch.yaml`, which holds the top-level kubeadm patches for the certificate SANs and the kubelet. Without server mode the render is the same `envsubst` as before. No `yq` is needed. `start.sh` refuses to run in server mode if a template no longer has the layout it patches.
+
+### Kubelet reserves
+
+The kubelet in a kind node takes the host's whole memory as its capacity, but it only measures its own node container, so it can't see dockerd or the OS. With no reserves the pods can fill the host, and then the host's OOM killer picks the victim. That could be dockerd or the API server.
+
+The two memory settings do different jobs:
+- **`systemReserved`** lowers allocatable and caps the pods' cgroup (`kubepods`) at capacity − `systemReserved`. It has to cover everything that isn't a pod: dockerd and the OS outside the node, and kubelet, containerd and the shims inside it.
+- **`evictionHard` `memory.available`** makes the kubelet evict pods once capacity − node working set drops below it. It has to exceed `systemReserved` minus the in-node daemons; otherwise the cgroup cap hits first and the kernel kills a process inside `kubepods` instead of the kubelet evicting a pod.
+
+The defaults are sized for svc:
+- **Facts:** a 16 GiB VM, so capacity is about 15.6 GiB. dockerd and the OS use about 1 GiB, kubelet, containerd and the shims an estimated 0.75 GiB, and the node's working set is about 11.8 GiB today.
+- **What happens as usage grows:**
+
+  | Event | Node working set |
+  | --- | --- |
+  | Eviction starts (capacity − 2 GiB) | ≈ 13.6 GiB, 1.8 GiB above today |
+  | Pod cgroup cap: the kernel kills inside `kubepods` (pods at capacity − 2 GiB) | ≈ 14.35 GiB |
+  | The host runs out of memory (node + dockerd and OS = capacity) | ≈ 14.6 GiB |
+
+- **Allocatable** is capacity − 2 GiB − 2 GiB ≈ 11.6 GiB. It bounds the sum of pod memory *requests*, not usage.
+- **On a host of another size,** keep both rules: reserved ≥ outside usage + in-node daemons, and eviction > reserved − in-node daemons.
+
+`nodefs.available: 10%` turns back on the disk-pressure eviction that kind disables with `0%`. The node's `/var` is a Docker volume, so the signal watches the filesystem holding Docker's data root. `imagefs.available` and `nodefs.inodesFree` stay at kind's `0%`.
+
+### Restart policy
+
+kind creates nodes with `on-failure:1`, so a host reboot would leave the cluster down. Server mode sets `unless-stopped` on every node on each run; the proxies already have it. A single-node cluster comes back by itself after a reboot.
+
+### API access and the remote kubeconfig
+
+The API server publishes on `0.0.0.0:6443`. `start.sh` exports the server's own kubeconfig as before; its server is `https://0.0.0.0:6443`, which works only on the server. Derive a kubeconfig for the remote machine there; these scripts never write to it:
+
+```bash
+# On the laptop. The context, cluster and user all stay kind-local-dind-cluster.
+ssh svc kind get kubeconfig --name local-dind-cluster > ~/.kube/svc.yaml
+chmod 600 ~/.kube/svc.yaml     # it carries the cluster-admin client key
+kubectl config set-cluster kind-local-dind-cluster --kubeconfig ~/.kube/svc.yaml \
+  --server https://svc.example.ts.net:6443
+kubectl --kubeconfig ~/.kube/svc.yaml get nodes
+```
+
+The host name in `--server` must be one of `KIND_API_SANS`. Before merging the file into `~/.kube/config`, delete the old local `kind-local-dind-cluster` entries there: where both files use a name, `kubectl config view --flatten` keeps the first one.
+
+### Exposure and the firewall
+
+With `KIND_BIND_ADDR=0.0.0.0` in server mode, ports 80, 443 and 6443 listen on every interface, and svc's guest firewall is the filter. Docker publishes these ports through DNAT, so their packets take the forward path, not input. A firewall that only filters input, like plain ufw rules, never sees them: filter them in Docker's `DOCKER-USER` chain or an equivalent forward hook.
+
+### Plain-HTTP registries
+
+For each `host:port` in `KIND_HTTP_REGISTRIES`, `start.sh` writes `/etc/containerd/certs.d/<host:port>/hosts.toml` into every node:
+
+```toml
+server = "http://192.168.124.20:5000"
+
+[host."http://192.168.124.20:5000"]
+  capabilities = ["pull", "resolve"]
+```
+
+This is kind's documented local-registry pattern. Node images from kind v0.27 on already point containerd's `config_path` at that directory, and containerd reads the file at pull time. Pods then use the registry's name in the image, for example `192.168.124.20:5000/app:1.0`. The file is written on every run, because a recreated node starts without it. Dropping a registry from the variable doesn't delete its file from a running node.
+
 ## Cluster Topology & Storage Pools
 
 ### Two profiles
@@ -248,7 +354,7 @@ This *adds* trust for the server's CA without touching your laptop's own mkcert 
 
 ### Storage pools — what they are
 
-A "storage pool" is a directory on the host (`scripts/cluster-setup/kind/data-pool-{1,2}`) bind-mounted into the kind node container at `/mnt/data-pool-{1,2}`. PVs with `hostPath: /mnt/data-pool-N/<subdir>` survive cluster recreations because the data lives on the host. `stop.sh` deletes the cluster but leaves the pools alone.
+A "storage pool" is a directory on the host (`${KIND_DATA_ROOT}/data-pool-{1,2}`; `KIND_DATA_ROOT` defaults to `scripts/cluster-setup/kind`) bind-mounted into the kind node container at `/mnt/data-pool-{1,2}`. PVs with `hostPath: /mnt/data-pool-N/<subdir>` survive cluster recreations because the data lives on the host. `stop.sh` deletes the cluster but leaves the pools alone.
 
 The host directories are gitignored. `start.sh` creates them if missing. On Linux, files written by pods keep their container UIDs (e.g. postgres' `999`), so cleaning a pool requires `sudo rm -rf`; on macOS, Docker Desktop's file sharing maps everything to your user.
 
@@ -342,7 +448,7 @@ If you want a third pool (rare):
 
 ## Linux notes
 
-`start.sh` handles two Linux-only concerns automatically (both idempotent, both `sudo`-prompting with the content printed first):
+`start.sh` handles two Linux-only concerns automatically (both idempotent, both `sudo`-prompting with the content printed first). [Server mode](#server-mode) skips both.
 
 **inotify limits.** kind on Linux commonly exhausts the kernel's default inotify limits once Flux, ingress-nginx, and the observability stack are running — pods crash-loop with `too many open files`. `start.sh` raises `fs.inotify.max_user_watches` to 524288 and `fs.inotify.max_user_instances` to 512 via `/etc/sysctl.d/99-kind-inotify.conf` (it never lowers values you've already raised). Set `KIND_SKIP_SYSCTL=1` to skip; remove the file to undo.
 
